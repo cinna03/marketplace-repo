@@ -1,0 +1,50 @@
+import 'reflect-metadata';
+import { RequestMethod } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
+import { json } from 'express';
+import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
+import { AppModule } from './app.module';
+import { ApiExceptionFilter } from './common/filters/api-exception.filter';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  const config = app.get(ConfigService);
+  const origins = (config.getOrThrow<string>('CORS_ORIGIN') ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  app.setGlobalPrefix('v1', {
+    exclude: [{ path: '/', method: RequestMethod.GET }],
+  });
+  app.use(helmet());
+  app.use(cookieParser());
+  app.use(json({ limit: '32kb' }));
+  const privateOrigin = /^https?:\/\/(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?::\d+)?$/;
+  app.enableCors({
+    origin(origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) {
+      if (!origin || origins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      if (config.get<string>('NODE_ENV') !== 'production' && privateOrigin.test(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
+  app.useGlobalFilters(new ApiExceptionFilter());
+  if (config.get<string>('NODE_ENV') === 'production') {
+    app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  }
+
+  await app.listen(config.getOrThrow<number>('PORT'));
+}
+
+void bootstrap();
