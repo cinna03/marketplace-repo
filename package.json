@@ -1,0 +1,23 @@
+{
+  "name": "marketplace",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @marketplace/contracts && npm run build -w @marketplace/api",
+    "test": "npm run build -w @marketplace/contracts && npm run test -w @marketplace/api",
+    "dev": "npm run build -w @marketplace/contracts && npm run start:dev -w @marketplace/api"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "prisma@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.2": true,
+    "@parcel/watcher@2.6.0": true
+  }
+}
