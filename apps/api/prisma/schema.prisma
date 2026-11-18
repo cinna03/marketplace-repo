@@ -1,0 +1,390 @@
+// Module 1 identity schema.
+// Artwork, order, escrow, and certificate models arrive with their own modules.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  active
+  suspended
+  pending_deletion
+  deleted
+}
+
+enum RoleName {
+  collector
+  artist
+  admin
+}
+
+enum OauthProvider {
+  google
+  apple
+}
+
+enum MfaFactorType {
+  totp
+}
+
+enum PrivacyRequestType {
+  export
+  delete
+}
+
+enum PrivacyRequestStatus {
+  pending
+  processing
+  completed
+  rejected
+}
+
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  email           String     @unique
+  passwordHash    String?    @map("password_hash")
+  emailVerifiedAt DateTime?  @map("email_verified_at")
+  phoneCiphertext String?    @map("phone_ciphertext")
+  status          UserStatus @default(active)
+  tokenVersion    Int        @default(0) @map("token_version")
+  lastLoginAt     DateTime?  @map("last_login_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+  deletedAt       DateTime?  @map("deleted_at")
+
+  roles           UserRole[]
+  oauthAccounts   OauthAccount[]
+  refreshTokens   RefreshToken[]
+  mfaFactors      MfaFactor[]
+  addresses       Address[]
+  passwordResets  PasswordResetToken[]
+  privacyRequests PrivacyRequest[]
+  auditActions    AuditLog[]           @relation("AuditActor")
+  collectorProfile CollectorProfile?
+  artistProfile    ArtistProfile?
+  journeyEvents    JourneyEvent[]
+  cart             Cart?
+  orders           ShopOrder[]
+
+  @@map("users")
+}
+
+model Role {
+  id    String   @id @default(uuid()) @db.Uuid
+  name  RoleName @unique
+  users UserRole[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  grantedAt DateTime @default(now()) @map("granted_at")
+  grantedBy String?  @map("granted_by") @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model OauthAccount {
+  id             String        @id @default(uuid()) @db.Uuid
+  userId         String        @map("user_id") @db.Uuid
+  provider       OauthProvider
+  providerUserId String        @map("provider_user_id")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("oauth_accounts")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  familyId  String    @map("family_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, familyId])
+  @@map("refresh_tokens")
+}
+
+model MfaFactor {
+  id               String        @id @default(uuid()) @db.Uuid
+  userId           String        @map("user_id") @db.Uuid
+  type             MfaFactorType
+  secretCiphertext String        @map("secret_ciphertext")
+  confirmedAt      DateTime?     @map("confirmed_at")
+  disabledAt       DateTime?     @map("disabled_at")
+  lastAcceptedStep Int?          @map("last_accepted_step")
+  createdAt        DateTime      @default(now()) @map("created_at")
+
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recoveryCodes MfaRecoveryCode[]
+
+  @@index([userId])
+  @@map("mfa_factors")
+}
+
+model MfaRecoveryCode {
+  id       String    @id @default(uuid()) @db.Uuid
+  factorId String    @map("factor_id") @db.Uuid
+  codeHash String    @map("code_hash")
+  usedAt   DateTime? @map("used_at")
+
+  factor MfaFactor @relation(fields: [factorId], references: [id], onDelete: Cascade)
+
+  @@index([factorId])
+  @@map("mfa_recovery_codes")
+}
+
+model Address {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  label             String?
+  recipientName     String   @map("recipient_name")
+  line1Ciphertext   String   @map("line1_ciphertext")
+  line2Ciphertext   String?  @map("line2_ciphertext")
+  city              String
+  region            String?
+  postalCode        String   @map("postal_code")
+  countryCode       String   @map("country_code") @db.Char(2)
+  phoneCiphertext   String?  @map("phone_ciphertext")
+  isDefaultShipping Boolean  @default(false) @map("is_default_shipping")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  before     Json?
+  after      Json?
+  ip         String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
+}
+
+model PrivacyRequest {
+  id          String               @id @default(uuid()) @db.Uuid
+  userId      String               @map("user_id") @db.Uuid
+  type        PrivacyRequestType
+  status      PrivacyRequestStatus @default(pending)
+  createdAt   DateTime             @default(now()) @map("created_at")
+  completedAt DateTime?            @map("completed_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@map("privacy_requests")
+}
+
+enum CatalogSource {
+  met
+}
+
+enum PaintingMedium {
+  canvas
+  wood_panel
+  paper
+  other
+}
+
+/// A public-domain Met painting in the same shape as the AR app's ArtworkRecord.
+/// Sizes are centimetres, matching PaintingDimensions in the Unity project.
+model CatalogArtwork {
+  id                 String         @id @default(uuid()) @db.Uuid
+  source             CatalogSource
+  sourceId           String         @map("source_id")
+  title              String
+  artist             String
+  objectDate         String         @map("object_date")
+  creditLine         String         @map("credit_line")
+  mediumDescription  String         @map("medium_description")
+  medium             PaintingMedium
+  widthCm            Decimal        @map("width_cm") @db.Decimal(8, 2)
+  heightCm           Decimal        @map("height_cm") @db.Decimal(8, 2)
+  depthCm            Decimal        @map("depth_cm") @db.Decimal(8, 2)
+  imageUrl           String         @map("image_url")
+  thumbnailUrl       String         @map("thumbnail_url")
+  priceAmount        BigInt         @map("price_amount")
+  currency           String         @db.Char(3)
+  syncedAt           DateTime       @map("synced_at")
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+  cartItems          CartItem[]
+
+  @@unique([source, sourceId])
+  @@index([artist])
+  @@map("catalog_artworks")
+}
+
+/// Buyer details. Kept off the auth row so password resets and MFA never rewrite them.
+model CollectorProfile {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @unique @map("user_id") @db.Uuid
+  displayName String    @map("display_name")
+  city        String?
+  countryCode String?   @map("country_code") @db.Char(2)
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("collector_profiles")
+}
+
+model ArtistProfile {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @unique @map("user_id") @db.Uuid
+  displayName String   @map("display_name")
+  slug        String   @unique
+  bio         String?
+  city        String?
+  countryCode String?  @map("country_code") @db.Char(2)
+  website     String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("artist_profiles")
+}
+
+enum JourneyEventKind {
+  artwork_viewed
+  dimensions_checked
+  credit_reviewed
+  viewed_in_room
+  address_saved
+  checkout_started
+  checkout_abandoned
+  purchase_completed
+}
+
+/// Append-only. A new login or MFA code does not delete these rows.
+model JourneyEvent {
+  id         String           @id @default(uuid()) @db.Uuid
+  userId     String           @map("user_id") @db.Uuid
+  kind       JourneyEventKind
+  sourceId   String?          @map("source_id")
+  sessionId  String           @map("session_id")
+  occurredAt DateTime         @default(now()) @map("occurred_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, occurredAt])
+  @@index([userId, sourceId])
+  @@map("journey_events")
+}
+
+model Cart {
+  id        String     @id @default(uuid()) @db.Uuid
+  userId    String     @unique @map("user_id") @db.Uuid
+  updatedAt DateTime   @updatedAt @map("updated_at")
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String         @id @default(uuid()) @db.Uuid
+  cartId    String         @map("cart_id") @db.Uuid
+  artworkId String         @map("artwork_id") @db.Uuid
+  quantity  Int
+  cart      Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  artwork   CatalogArtwork @relation(fields: [artworkId], references: [id])
+
+  @@unique([cartId, artworkId])
+  @@map("cart_items")
+}
+
+enum ShopOrderStatus {
+  awaiting_payment
+  paid
+  cancelled
+}
+
+model ShopOrder {
+  id               String          @id @default(uuid()) @db.Uuid
+  userId           String          @map("user_id") @db.Uuid
+  number           String          @unique
+  status           ShopOrderStatus @default(awaiting_payment)
+  currency         String          @db.Char(3)
+  totalAmount      BigInt          @map("total_amount")
+  recipientName    String          @map("recipient_name")
+  line1Ciphertext  String          @map("line1_ciphertext")
+  line2Ciphertext  String?         @map("line2_ciphertext")
+  city             String
+  region           String?
+  postalCode       String          @map("postal_code")
+  countryCode      String          @map("country_code") @db.Char(2)
+  placedAt         DateTime        @default(now()) @map("placed_at")
+  paidAt           DateTime?       @map("paid_at")
+  user             User            @relation(fields: [userId], references: [id])
+  items            ShopOrderItem[]
+
+  @@index([userId, placedAt])
+  @@map("shop_orders")
+}
+
+model ShopOrderItem {
+  id         String    @id @default(uuid()) @db.Uuid
+  orderId    String    @map("order_id") @db.Uuid
+  sourceId   String    @map("source_id")
+  title      String
+  artist     String
+  quantity   Int
+  unitAmount BigInt    @map("unit_amount")
+  widthCm    Decimal   @map("width_cm") @db.Decimal(8, 2)
+  heightCm   Decimal   @map("height_cm") @db.Decimal(8, 2)
+  depthCm    Decimal   @map("depth_cm") @db.Decimal(8, 2)
+  order      ShopOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("shop_order_items")
+}
