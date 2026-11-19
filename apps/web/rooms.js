@@ -36,15 +36,6 @@ const moodGuide = {
   pale: 'quiet',
   dark: 'deep',
 };
-const swatches = [
-  ['gold', '#c4a15a'],
-  ['blue', '#3d5c78'],
-  ['green', '#3f5c45'],
-  ['red', '#8c3b24'],
-  ['earth', '#7a6248'],
-  ['pale', '#d9d0c2'],
-  ['dark', '#1c1915'],
-];
 const frames = { none: 0, wood: 4500, linen: 7500 };
 const shipTiers = {
   kigali: { label: 'Kigali rider', cents: 8000 },
@@ -64,7 +55,6 @@ function blankRooms() {
     reserved: {},
     advisory: [],
     payout: null,
-    filters: { q: '', medium: '', min: '', max: '', colour: '', minW: '', minH: '', orientation: '' },
     concerns: {},
     feedback: {},
     tries: [],
@@ -141,31 +131,6 @@ function findCollection(works, id) {
   return collectionsFrom(works).find((group) => group.id === id);
 }
 
-function matchesQuery(work, raw) {
-  const q = String(raw || '').trim().toLowerCase();
-  if (!q) return true;
-  const named = `${work.title || ''} ${work.artist || ''}`.toLowerCase();
-  if (named.includes(q)) return true;
-  const asked = q.replace(/×|x|\*|by/gi, ' ').replace(/cm/g, ' ').replace(/\s+/g, ' ').trim();
-  const numbers = asked.match(/\d+(?:\.\d+)?/g) || [];
-  if (!numbers.length) return false;
-  const dims = [Number(work.widthCm), Number(work.heightCm)];
-  return numbers.every((n) => dims.some((d) => String(d).startsWith(n) || Math.abs(d - Number(n)) < 0.05));
-}
-
-function passes(work, filters) {
-  if (!matchesQuery(work, filters.q)) return false;
-  const price = Number(work.priceAmount) / 100;
-  if (filters.medium && work.medium !== filters.medium) return false;
-  if (filters.colour && colourOf(work) !== filters.colour) return false;
-  if (filters.orientation && orientationOf(work) !== filters.orientation) return false;
-  if (filters.min && price < Number(filters.min)) return false;
-  if (filters.max && price > Number(filters.max)) return false;
-  if (filters.minW && Number(work.widthCm) < Number(filters.minW)) return false;
-  if (filters.minH && Number(work.heightCm) < Number(filters.minH)) return false;
-  return true;
-}
-
 function luhn(value) {
   const digits = value.replace(/\D/g, '');
   if (digits.length < 13 || digits.length > 19) return false;
@@ -195,11 +160,6 @@ function expiryOk(value) {
   if (month < 1 || month > 12) return false;
   const end = new Date(year, month, 1);
   return end > new Date();
-}
-
-function rememberScroll(hash) {
-  const y = sessionStorage.getItem(`marketplace.scroll:${hash}`);
-  if (y) requestAnimationFrame(() => window.scrollTo(0, Number(y)));
 }
 
 let previousHash = location.hash;
@@ -443,6 +403,10 @@ window.Rooms = {
   isReserved(sourceId) {
     return Boolean(rooms().reserved[sourceId]);
   },
+  /** The paintings this browser has tried on a wall, oldest first. */
+  triedIds() {
+    return (rooms().tries || []).map((item) => String(item.sourceId));
+  },
   /** Adds or removes a painting from Saved and says whether it is saved now. */
   toggleSaved(sourceId) {
     const state = rooms();
@@ -533,30 +497,6 @@ window.Rooms = {
   subjectName: subjectOf,
 };
 
-function iconHeart(on) {
-  return `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.7" d="M12 20.2S4.5 15.4 4.5 10a4 4 0 0 1 7.5-2 4 4 0 0 1 7.5 2c0 5.4-7.5 10.2-7.5 10.2z"/></svg>`;
-}
-
-function iconSaved() {
-  return `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M6 4.5h12V20l-6-3.2L6 20z"/></svg>`;
-}
-
-function iconMore() {
-  return `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M5 12h14M13 6l6 6-6 6"/></svg>`;
-}
-
-function likedWorks(works) {
-  const saved = rooms().saved;
-  const seeds = works.filter((work) => saved.includes(work.sourceId));
-  if (!seeds.length) return { label: '', works: [] };
-  const artists = new Set(seeds.map((work) => work.artist).filter(Boolean));
-  const colours = new Set(seeds.map(colourOf));
-  return {
-    label: seeds[0].title,
-    works: works.filter((work) => !saved.includes(work.sourceId) && (artists.has(work.artist) || colours.has(colourOf(work)))).slice(0, 8),
-  };
-}
-
 async function renderHome() {
   const { api, esc, place, setPage, money } = shop();
   setPage('visit', 'Home');
@@ -575,246 +515,6 @@ async function renderHome() {
         <a class="button" href="#gallery">Discover</a>
         <a class="button quiet" href="#search">Search</a>
       </div>`);
-  } catch (error) {
-    place(shop().formError(error), false);
-  }
-}
-
-async function renderDiscover() {
-  const { api, esc, place, setPage, money } = shop();
-  setPage('visit', 'Discover');
-  try {
-    const works = await api('/catalog/artworks');
-    const state = rooms();
-    const groups = collectionsFrom(works);
-    const heroIds = ['picks', 'earthy', 'landscapes'];
-    const heroes = heroIds.map((id) => groups.find((group) => group.id === id)).filter(Boolean);
-    const pills = ['earthy', 'deep', 'under-200', 'landscapes'].map((id) => groups.find((group) => group.id === id)).filter(Boolean);
-    const artists = [...new Map(works.filter((work) => work.artist).map((work) => [work.artist, work])).values()].slice(0, 8);
-    const liked = likedWorks(works);
-    let tries = [];
-    try {
-      tries = state.tries || [];
-    } catch {
-      tries = [];
-    }
-    const byId = new Map(works.map((work) => [work.sourceId, work]));
-    const homes = tries.map((item) => byId.get(item.sourceId)).filter(Boolean).slice(0, 6);
-    const feed = works.slice(0, 12);
-    place(`
-      <header class="discover-head">
-        <h1>Discover</h1>
-        <a class="icon-link" href="#saved" aria-label="Saved paintings">${iconSaved()}</a>
-      </header>
-      <div class="editorial-row">
-        ${heroes.map((group) => {
-          const cover = group.works[0];
-          return `<a class="editorial" href="#collection/${encodeURIComponent(group.id)}">
-            <img src="${esc(cover.imageUrl)}" alt="${esc(cover.title)}" />
-            <span class="editorial-copy">
-              <strong>${esc(group.title)}</strong>
-              <span>${esc(group.text)}</span>
-              <span class="button">Explore</span>
-            </span>
-          </a>`;
-        }).join('')}
-      </div>
-      <section class="block">
-        <h2>Browse by feel</h2>
-        <div class="vibes">
-          ${pills.map((group) => `<a class="vibe" href="#collection/${encodeURIComponent(group.id)}">
-            <img src="${esc(group.works[0].thumbnailUrl)}" alt="" />
-            <span>${esc(group.title)}</span>
-          </a>`).join('')}
-        </div>
-      </section>
-      <section class="block">
-        <h2>From the catalogue</h2>
-        <div class="feed">
-          ${feed.map((work) => {
-            const saved = state.saved.includes(work.sourceId);
-            return `<article class="piece">
-              <div class="piece-visual">
-                <a class="frame" href="#work/${esc(work.sourceId)}/discover"><img src="${esc(work.thumbnailUrl)}" alt="${esc(work.title)}" loading="lazy" decoding="async" /></a>
-                <button type="button" class="heart" data-save="${esc(work.sourceId)}" aria-pressed="${saved}" aria-label="${saved ? 'Remove from saved' : 'Save this painting'}">${iconHeart(saved)}</button>
-                <button type="button" class="space-badge" data-space="${esc(work.sourceId)}">In your space</button>
-              </div>
-              <a class="piece-meta" href="#work/${esc(work.sourceId)}/discover">
-                <strong>${esc(work.title)}</strong>
-                <span>${esc(work.artist || 'Unknown artist')}</span>
-                <span class="measures">${esc(work.widthCm)} × ${esc(work.heightCm)} cm</span>
-                <span class="price">${esc(money(work.priceAmount, work.currency))}</span>
-              </a>
-            </article>`;
-          }).join('')}
-        </div>
-      </section>
-      <section class="block">
-        <h2>Artists</h2>
-        <div class="stories">
-          ${artists.map((work) => {
-            const following = state.follows.includes(work.artist);
-            return `<article class="story">
-              <a href="#artist/${encodeURIComponent(work.artist)}"><img src="${esc(work.thumbnailUrl)}" alt="${esc(work.title)}" /></a>
-              <strong>${esc(work.artist)}</strong>
-              <button type="button" class="quiet follow" data-follow="${esc(work.artist)}" aria-pressed="${following}">${following ? 'Following' : '+ Follow'}</button>
-            </article>`;
-          }).join('')}
-        </div>
-      </section>
-      <section class="block">
-        <h2>Because you liked${liked.label ? ` ${esc(liked.label)}` : ''}</h2>
-        ${liked.works.length ? `<div class="carousel">${liked.works.map((work) => `<article class="like-card">
-            <a class="work" href="#work/${esc(work.sourceId)}/discover">
-              <span class="frame"><img src="${esc(work.thumbnailUrl)}" alt="" loading="lazy" /></span>
-              <strong>${esc(work.title)}</strong>
-              <span>${esc(work.artist || 'Unknown artist')}</span>
-            </a>
-            <button type="button" class="quiet more" data-more="${esc(work.artist || work.title)}" aria-label="More like ${esc(work.title)}">${iconMore()} More like this</button>
-          </article>`).join('')}</div>` : '<p>Save a painting and this row follows the artist and the colour group.</p>'}
-      </section>
-      <section class="block">
-        <h2>In collectors' homes</h2>
-        ${homes.length ? `<div class="carousel">${homes.map((work) => `<a class="work" href="#work/${esc(work.sourceId)}/discover">
-            <span class="frame"><img src="${esc(work.thumbnailUrl)}" alt="${esc(work.title)}" /></span>
-            <strong>${esc(work.title)}</strong>
-            <span>Tried on a wall</span>
-          </a>`).join('')}</div>` : '<p>No wall photo yet. Try a piece in your own space, and that visit can be listed here.</p>'}
-      </section>`, false, () => {
-      const root = document.querySelector('#app');
-      root.addEventListener('click', (event) => {
-        const save = event.target.closest('[data-save]');
-        if (save) {
-          const id = save.dataset.save;
-          const next = rooms();
-          const on = next.saved.includes(id);
-          next.saved = on ? next.saved.filter((item) => item !== id) : [...next.saved, id];
-          keep(next);
-          save.setAttribute('aria-pressed', String(!on));
-          save.setAttribute('aria-label', on ? 'Save this painting' : 'Remove from saved');
-          save.innerHTML = iconHeart(!on);
-          return;
-        }
-        const space = event.target.closest('[data-space]');
-        if (space) {
-          shop().openPieceInSpace(space.dataset.space).catch((error) => {
-            space.insertAdjacentHTML('afterend', `<p class="error">${esc(error.message)}</p>`);
-          });
-          return;
-        }
-        const follow = event.target.closest('[data-follow]');
-        if (follow) {
-          const name = follow.dataset.follow;
-          const next = rooms();
-          const on = next.follows.includes(name);
-          next.follows = on ? next.follows.filter((item) => item !== name) : [...next.follows, name];
-          keep(next);
-          follow.setAttribute('aria-pressed', String(!on));
-          follow.textContent = on ? '+ Follow' : 'Following';
-          return;
-        }
-        const more = event.target.closest('[data-more]');
-        if (more) {
-          const next = rooms();
-          next.filters = { ...blankRooms().filters, q: more.dataset.more };
-          keep(next);
-          location.hash = '#search';
-        }
-      });
-    });
-  } catch (error) {
-    place(shop().formError(error), false);
-  }
-}
-
-async function renderSearch() {
-  const { api, esc, place, setPage } = shop();
-  setPage('visit', 'Search');
-  const state = rooms();
-  try {
-    const works = await api('/catalog/artworks');
-    const mediums = [...new Set(works.map((work) => work.medium).filter(Boolean))];
-    const shown = works.filter((work) => passes(work, state.filters));
-    const filters = state.filters;
-    place(`
-      <h1>Search</h1>
-      <label for="find">Artist, title, or size</label>
-      <input id="find" type="search" placeholder="Hals, A Banquet, or 66 × 40" value="${esc(filters.q || '')}" />
-      <p class="intro" id="result-count">${shown.length} of ${works.length} works.${[filters.medium, filters.colour, filters.orientation].filter(Boolean).length ? ` ${[filters.medium, filters.colour, filters.orientation].filter(Boolean).join(', ')} is also on.` : ''}</p>
-      <button type="button" id="open-filters">Filters</button>
-      <dialog id="filters" class="sheet-dialog">
-        <form method="dialog" id="filter-form">
-          <h2>Filters</h2>
-          <label for="medium">Medium</label>
-          <select id="medium" name="medium">
-            <option value="">Any</option>
-            ${mediums.map((medium) => `<option ${filters.medium === medium ? 'selected' : ''}>${esc(medium)}</option>`).join('')}
-          </select>
-          <label for="min">Minimum price, USD</label>
-          <input id="min" name="min" inputmode="decimal" value="${esc(filters.min)}" />
-          <label for="max">Maximum price, USD</label>
-          <input id="max" name="max" inputmode="decimal" value="${esc(filters.max)}" />
-          <p>Colour</p>
-          <div class="swatches">${swatches.map(([name, hex]) => `<button type="button" class="swatch ${filters.colour === name ? 'on' : ''}" data-colour="${name}" style="background:${hex}" aria-pressed="${filters.colour === name}" aria-label="${name}"></button>`).join('')}<button type="button" class="quiet" id="clear-colour">Any colour</button></div>
-          <label for="minW">Minimum width, cm</label>
-          <input id="minW" name="minW" inputmode="decimal" value="${esc(filters.minW)}" />
-          <label for="minH">Minimum height, cm</label>
-          <input id="minH" name="minH" inputmode="decimal" value="${esc(filters.minH)}" />
-          <label for="orientation">Orientation</label>
-          <select id="orientation" name="orientation">
-            ${['', 'landscape', 'portrait', 'square'].map((value) => `<option value="${value}" ${filters.orientation === value ? 'selected' : ''}>${value || 'Any'}</option>`).join('')}
-          </select>
-          <div class="actions">
-            <button type="submit">Show these works</button>
-            <button type="button" id="reset-filters" class="quiet">Clear</button>
-            <button type="button" id="close-filters" class="quiet">Close</button>
-          </div>
-        </form>
-      </dialog>
-      <div class="masonry">${shown.map((work) => card(work, 'search')).join('') || '<p>Nothing matches these filters. Clear them and look again.</p>'}</div>`, false, () => {
-      const dialog = document.querySelector('#filters');
-      const paintResults = () => {
-        const next = rooms();
-        const found = works.filter((work) => passes(work, next.filters));
-        const on = [next.filters.medium, next.filters.colour, next.filters.orientation, next.filters.min && 'a minimum price', next.filters.max && 'a maximum price', (next.filters.minW || next.filters.minH) && 'a minimum size'].filter(Boolean);
-        document.querySelector('#result-count').textContent = `${found.length} of ${works.length} works.${on.length ? ` ${on.join(', ')} is also on.` : ''}`;
-        document.querySelector('.masonry').innerHTML = found.map((work) => card(work, 'search')).join('') || '<p>Nothing matches. Try another name, artist, or size.</p>';
-      };
-      document.querySelector('#find').addEventListener('input', (event) => {
-        const next = rooms();
-        next.filters = { ...blankRooms().filters, ...next.filters, q: event.target.value };
-        keep(next);
-        paintResults();
-      });
-      document.querySelector('#open-filters').addEventListener('click', () => dialog.showModal());
-      document.querySelector('#close-filters').addEventListener('click', () => dialog.close());
-      document.querySelector('#clear-colour').addEventListener('click', () => {
-        document.querySelectorAll('.swatch').forEach((button) => button.setAttribute('aria-pressed', 'false'));
-        dialog.dataset.colour = '';
-      });
-      document.querySelectorAll('.swatch').forEach((button) => {
-        button.addEventListener('click', () => {
-          document.querySelectorAll('.swatch').forEach((other) => other.setAttribute('aria-pressed', 'false'));
-          button.setAttribute('aria-pressed', 'true');
-          dialog.dataset.colour = button.dataset.colour;
-        });
-      });
-      dialog.dataset.colour = filters.colour || '';
-      document.querySelector('#reset-filters').addEventListener('click', () => {
-        const next = rooms();
-        next.filters = blankRooms().filters;
-        keep(next);
-        renderSearch();
-      });
-      document.querySelector('#filter-form').addEventListener('submit', () => {
-        const data = Object.fromEntries(new FormData(document.querySelector('#filter-form')));
-        const next = rooms();
-        next.filters = { ...blankRooms().filters, ...next.filters, ...data, colour: dialog.dataset.colour || '' };
-        keep(next);
-        renderSearch();
-      });
-      rememberScroll('#search');
-    });
   } catch (error) {
     place(shop().formError(error), false);
   }
@@ -1373,12 +1073,7 @@ async function renderReceipt(number) {
 }
 
 window.renderHome = renderHome;
-window.renderDiscover = renderDiscover;
 window.renderRoom = (route) => {
-  if (route === '#search') {
-    renderSearch();
-    return true;
-  }
   if (route === '#collections') {
     renderCollections();
     return true;

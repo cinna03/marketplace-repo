@@ -252,7 +252,8 @@ async function render() {
   if (route === '#enter') return renderAuth();
   if (route === '#forgot') return renderForgot();
   if (route === '#reset') return renderReset();
-  if ((route === '#gallery' || route === '#discover') && window.renderDiscover) return window.renderDiscover();
+  if (route === '#search') return renderSearch();
+  if (route === '#gallery' || route === '#discover') return renderDiscover();
   if (window.renderRoom?.(route)) return undefined;
   return renderGallery();
 }
@@ -554,6 +555,29 @@ function backHref(from) {
 
 function describeFeel(work) {
   return { subject: window.Rooms.subjectName(work), mood: window.Rooms.moodName(work), colour: window.Rooms.colourName(work) };
+}
+
+async function renderDiscover() {
+  setPage('visit', 'Discover');
+  try {
+    const catalog = await api('/catalog/artworks');
+    const picks = new window.Cinnarios.DiscoverySampler(describeFeel).pick(catalog, { count: 18, triedIds: window.Rooms.triedIds() });
+    const page = new window.Cinnarios.DiscoverPage(picks, catalog.length, { esc });
+    place(page.html(), false, () => page.bind());
+  } catch (error) {
+    place(formError(error), false);
+  }
+}
+
+async function renderSearch() {
+  setPage('visit', 'Search');
+  try {
+    const catalog = await api('/catalog/artworks');
+    const page = new window.Cinnarios.SearchPage(catalog, new window.Cinnarios.CatalogSearch(describeFeel), { esc, money });
+    place(page.html(), false, () => page.bind());
+  } catch (error) {
+    place(formError(error), false);
+  }
 }
 
 async function renderWork(sourceId, from) {
