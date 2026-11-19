@@ -248,6 +248,9 @@ async function render() {
   if (route.startsWith('#work/')) return renderWork(route.slice('#work/'.length).split('/')[0], route.split('/')[2]);
   if (route.startsWith('#try/')) return renderTry(route.slice('#try/'.length).split('/')[0]);
   if (route === '#cart') return renderCart();
+  if (route === '#checkout') return renderCheckout();
+  if (route.startsWith('#receipt/')) return renderReceipt(decodeURIComponent(route.slice('#receipt/'.length)));
+  if (route === '#saved') return renderSaved();
   if (route === '#account') return renderAccount();
   if (route === '#enter') return renderAuth();
   if (route === '#forgot') return renderForgot();
@@ -723,104 +726,77 @@ function orderLabel(status) {
 
 async function renderCart() {
   carriedWork = null;
-  setPage('sheet', 'Cart');
+  setPage('visit', 'Cart');
   if (!signedIn()) {
-    place(`<h1>Your cart</h1><p><a href="#enter">Sign in</a> to keep works here.</p>`, false);
+    place('<section class="cart-page"><h1>Cart</h1><div class="empty-state"><h2>Sign in to keep a cart</h2><p>Your cart stays with your account, on the phone and on the computer.</p><a class="button" href="#enter">Sign in</a></div></section>', false);
     return;
   }
   try {
     const cart = await api('/cart');
-    const addresses = await api('/me/addresses');
-    const items = cart.items.length
-      ? `<div id="cart-lines" class="cart-lines">${cart.items.map((item) => `<div class="line">
-          <img src="${esc(item.thumbnailUrl)}" alt="" width="72" height="72" />
-          <div>
-            <p><strong>${esc(item.title)}</strong></p>
-            <p>${esc(item.widthCm)} × ${esc(item.heightCm)} cm reproduction · ${esc(money(item.lineAmount, item.currency))}</p>
-            <p class="qty"><button type="button" class="quiet" data-id="${esc(item.id)}" data-quantity="${item.quantity}" data-delta="-1">${item.quantity === 1 ? 'Remove' : 'Fewer'}</button><span>${esc(item.quantity)}</span><button type="button" class="quiet" data-id="${esc(item.id)}" data-quantity="${item.quantity}" data-delta="1" ${item.quantity >= 10 ? 'disabled' : ''}>More</button></p>
-          </div>
-        </div>`).join('')}</div>
-        <p class="total">Total ${esc(money(cart.totalAmount, cart.currency))}</p>
-        ${rateNote()}`
-      : '<p>Nothing here yet. <a href="#gallery">Choose a work.</a></p>';
-    const addressOptions = addresses.map((address) => `<option value="${esc(address.id)}">${esc(address.recipientName)}, ${esc(address.city)}${address.region ? `, ${esc(address.region)}` : ''}</option>`).join('');
-    const provinceOptions = Object.keys(RW_PROVINCES).map((province) => `<option value="${esc(province)}">${esc(province)}</option>`).join('');
-    const checkout = cart.items.length
-      ? `<section class="block">
-          <h2>Where it should arrive</h2>
-          <p>Delivery in this version is inside Rwanda. A rider uses the district, the sector, and a landmark.</p>
-          <form id="address-form">
-            <label for="recipientName">Name</label>
-            <input id="recipientName" name="recipientName" required />
-            <label for="phone">Phone</label>
-            <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" required pattern="(\\+?250|0)7[0-9]{8}" />
-            <p class="note">A mobile number a rider can call, such as 0788123456.</p>
-            <label for="region">Province</label>
-            <select id="region" name="region" required>
-              <option value="">Choose a province</option>
-              ${provinceOptions}
-            </select>
-            <label for="city">District</label>
-            <select id="city" name="city" required>
-              <option value="">Choose a district</option>
-            </select>
-            <label for="line2">Sector</label>
-            <input id="line2" name="line2" required />
-            <label for="line1">Street or landmark</label>
-            <input id="line1" name="line1" required />
-            <button type="submit">Save address</button>
-          </form>
-          <form id="checkout-form">
-            <label for="addressId">Ship to</label>
-            <select id="addressId" name="addressId" ${addressOptions ? '' : 'disabled'}>${addressOptions || '<option>Save an address first</option>'}</select>
-            <button type="submit" ${addressOptions ? '' : 'disabled'}>Proceed to checkout</button>
-            <p class="note">The next step records the order on this account. Payment is not taken.</p>
-          </form>
-        </section>`
-      : '';
-    place(`<h1>Your cart</h1>
-      ${items}
-      ${checkout}
-      <p id="cart-error" class="error" role="alert"></p>`, false, () => {
-    document.querySelector('#cart-lines')?.addEventListener('click', async (event) => {
-      const button = event.target.closest('button[data-id]');
-      if (!button) return;
-      const next = Number(button.dataset.quantity) + Number(button.dataset.delta);
-      try {
-        if (next < 1) await api(`/cart/items/${button.dataset.id}`, { method: 'DELETE' });
-        else await api(`/cart/items/${button.dataset.id}`, { method: 'PATCH', body: JSON.stringify({ quantity: next }) });
-        renderCart();
-      } catch (error) {
-        document.querySelector('#cart-error').textContent = error.message;
-      }
-    });
-    const province = document.querySelector('#region');
-    const district = document.querySelector('#city');
-    const fillDistricts = () => {
-      const names = RW_PROVINCES[province.value] || [];
-      district.innerHTML = `<option value="">Choose a district</option>${names.map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join('')}`;
-    };
-    province?.addEventListener('change', fillDistricts);
-    document.querySelector('#address-form')?.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.currentTarget));
-      data.countryCode = 'RW';
-      data.postalCode = 'N/A';
-      try {
-        await api('/me/addresses', { method: 'POST', body: JSON.stringify(data) });
-        renderCart();
-      } catch (error) {
-        document.querySelector('#cart-error').textContent = error.message;
-      }
-    });
-    document.querySelector('#checkout-form')?.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const addressId = new FormData(event.currentTarget).get('addressId');
-      sessionStorage.setItem('marketplace.checkoutAddress', String(addressId));
-      sessionStorage.setItem('marketplace.checkoutStep', 'ship');
-      location.hash = '#checkout';
-    });
-    });
+    const page = new window.Cinnarios.CartPage(cart, {
+      setQuantity: async (id, quantity) => {
+        await api(`/cart/items/${id}`, { method: 'PATCH', body: JSON.stringify({ quantity }) });
+        await refreshCartCount();
+        return api('/cart');
+      },
+      remove: async (id) => {
+        await api(`/cart/items/${id}`, { method: 'DELETE' });
+        await refreshCartCount();
+        return api('/cart');
+      },
+    }, { esc, money });
+    place(page.html(), false, () => page.bind());
+  } catch (error) {
+    place(formError(error), false);
+  }
+}
+
+async function renderCheckout() {
+  setPage('visit', 'Check out');
+  if (!signedIn()) {
+    location.hash = '#enter';
+    return;
+  }
+  try {
+    const [cart, addresses] = await Promise.all([api('/cart'), api('/me/addresses')]);
+    if (!cart.items.length) {
+      location.hash = '#cart';
+      return;
+    }
+    const page = new window.Cinnarios.CheckoutPage(cart, addresses[addresses.length - 1] || null, RW_PROVINCES, {
+      placeOrder: async (address, tierId) => {
+        const saved = await api('/me/addresses', { method: 'POST', body: JSON.stringify(address) });
+        const order = await api('/checkout', { method: 'POST', body: JSON.stringify({ addressId: saved.id, sessionId: sessionId() }) });
+        window.Cinnarios.Delivery.rememberForOrder(order.number, tierId);
+        sessionStorage.setItem('marketplace.lastOrder', order.number);
+        await refreshCartCount();
+        location.hash = `#receipt/${order.number}`;
+      },
+    }, { esc, money });
+    place(page.html(), false, () => page.bind());
+  } catch (error) {
+    place(formError(error), false);
+  }
+}
+
+async function renderReceipt(number) {
+  setPage('visit', 'Order placed');
+  try {
+    const order = (await api('/orders')).find((item) => item.number === number);
+    if (!order) throw new Error('That order is not on this account.');
+    const page = new window.Cinnarios.OrderPlacedPage(order, window.Cinnarios.Delivery.forOrder(number), { esc, money });
+    place(page.html(), false);
+  } catch (error) {
+    place(formError(error), false);
+  }
+}
+
+async function renderSaved() {
+  setPage('visit', 'Saved');
+  try {
+    const catalog = await api('/catalog/artworks');
+    const page = new window.Cinnarios.SavedPage(catalog, window.Rooms, { esc, money });
+    place(page.html(), false, () => page.bind());
   } catch (error) {
     place(formError(error), false);
   }

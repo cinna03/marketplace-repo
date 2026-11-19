@@ -37,10 +37,6 @@ const moodGuide = {
   dark: 'deep',
 };
 const frames = { none: 0, wood: 4500, linen: 7500 };
-const shipTiers = {
-  kigali: { label: 'Kigali rider', cents: 8000 },
-  province: { label: 'Another province', cents: 15000 },
-};
 
 function blankRooms() {
   return {
@@ -167,20 +163,6 @@ window.addEventListener('hashchange', () => {
   sessionStorage.setItem(`marketplace.scroll:${previousHash || '#gallery'}`, String(window.scrollY));
   previousHash = location.hash;
 });
-
-function card(work, from) {
-  const { esc } = shop();
-  const state = rooms();
-  const mark = state.reserved[work.sourceId] ? '<span class="badge">Reserved in this browser</span>' : '';
-  const suffix = from ? `/${from}` : '';
-  return `<a class="work" href="#work/${esc(work.sourceId)}${suffix}">
-    <span class="frame"><img src="${esc(work.thumbnailUrl)}" alt="" loading="lazy" decoding="async" /></span>
-    ${mark}
-    <strong>${esc(work.title)}</strong>
-    <span>${esc(work.artist || 'Unknown artist')}</span>
-    <span class="measures">${esc(work.widthCm)} × ${esc(work.heightCm)} cm</span>
-  </a>`;
-}
 
 function areaOf(work) {
   return Number(work.widthCm) * Number(work.heightCm);
@@ -403,6 +385,17 @@ window.Rooms = {
   isReserved(sourceId) {
     return Boolean(rooms().reserved[sourceId]);
   },
+  /** Saved painting ids, in the order they were saved. */
+  savedIds() {
+    return rooms().saved.slice();
+  },
+  /** Puts a painting back into Saved at its old place (used by Undo). */
+  insertSaved(sourceId, index) {
+    const state = rooms();
+    if (state.saved.includes(sourceId)) return;
+    state.saved.splice(Math.max(0, Math.min(index, state.saved.length)), 0, sourceId);
+    keep(state);
+  },
   /** The paintings this browser has tried on a wall, oldest first. */
   triedIds() {
     return (rooms().tries || []).map((item) => String(item.sourceId));
@@ -553,16 +546,6 @@ async function renderArtist(name) {
   place(`<h1>${esc(artist)}</h1>
     <p>${own.length} museum ${own.length === 1 ? 'work' : 'works'} in this catalogue.</p>
     <div class="grid">${own.map(card).join('') || '<p>None in this catalogue.</p>'}</div>`);
-}
-
-async function renderSaved() {
-  const { api, esc, place, setPage } = shop();
-  setPage('visit', 'Saved');
-  const state = rooms();
-  const works = await api('/catalog/artworks');
-  const saved = works.filter((work) => state.saved.includes(work.sourceId));
-  place(`<h1>Saved</h1>
-    ${saved.length ? `<div class="grid">${saved.map(card).join('')}</div>` : '<p>Nothing saved yet. Open a work and choose Save.</p>'}`);
 }
 
 async function renderBoard(id) {
@@ -975,103 +958,6 @@ function shake(form, message) {
   if (error) error.textContent = message;
 }
 
-async function renderCheckout() {
-  const { api, esc, place, setPage, money, signedIn, formError, rateNote, sessionId } = shop();
-  setPage('sheet', 'Checkout');
-  if (!signedIn()) {
-    place('<h1>Checkout</h1><p><a href="#enter">Sign in</a> to place the sandbox order.</p>', false);
-    return;
-  }
-  let cart;
-  let addresses;
-  try {
-    [cart, addresses] = await Promise.all([api('/cart'), api('/me/addresses')]);
-  } catch (error) {
-    place(formError(error), false);
-    return;
-  }
-  if (!cart.items.length) {
-    place('<h1>Checkout</h1><p>The cart is empty. <a href="#gallery">Choose a work.</a></p>', false);
-    return;
-  }
-  const crowded = cart.items.find((item) => item.quantity > 1);
-  if (crowded) {
-    place(`<h1>Checkout</h1><p>${esc(crowded.title)} is in the cart more than once. This sandbox treats each work as a single print. <a href="#cart">Lower it to one.</a></p>`, false);
-    return;
-  }
-  const addressId = sessionStorage.getItem('marketplace.checkoutAddress');
-  const address = addresses.find((item) => item.id === addressId);
-  if (!address) {
-    place('<h1>Checkout</h1><p>Choose a delivery address in the cart first. <a href="#cart">Back to the cart.</a></p>', false);
-    return;
-  }
-  const tier = sessionStorage.getItem('marketplace.shipTier') || 'kigali';
-  place(`<h1>Checkout</h1>
-    <p>${cart.items.map((item) => esc(item.title)).join(', ')}</p>
-    <p class="total">${esc(money(cart.totalAmount, cart.currency))}</p>
-    ${rateNote()}
-    <p>Ship to ${esc(address.recipientName)}, ${esc(address.line1)}, ${esc(address.city)}${address.region ? `, ${esc(address.region)}` : ''}.</p>
-    <p>The order is saved to this account and stays unpaid. Payment confirmation is not part of this version, so nothing is charged.</p>
-    <form id="pay-form">
-      <button type="submit" id="authorize">Place order</button>
-      <p class="error" role="alert"></p>
-    </form>
-    <p id="authorizing" class="settle" hidden>Saving the order…</p>`, false, () => {
-    const form = document.querySelector('#pay-form');
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      document.querySelector('#authorizing').hidden = false;
-      document.querySelector('#authorize').disabled = true;
-      try {
-        const order = await api('/checkout', { method: 'POST', body: JSON.stringify({ addressId, sessionId: sessionId() }) });
-        sessionStorage.setItem('marketplace.lastOrder', order.number);
-        await shop().refreshCartCount();
-        location.hash = `#receipt/${order.number}`;
-      } catch (error) {
-        document.querySelector('#authorizing').hidden = true;
-        document.querySelector('#authorize').disabled = false;
-        shake(form, error.message);
-      }
-    });
-  });
-}
-
-async function renderReceipt(number) {
-  const { api, esc, place, setPage, money, signedIn, formError } = shop();
-  setPage('sheet', 'Receipt');
-  if (!signedIn()) {
-    place('<h1>Receipt</h1><p><a href="#enter">Sign in</a> to open it.</p>', false);
-    return;
-  }
-  try {
-    const orders = await api('/orders');
-    const order = orders.find((item) => item.number === number);
-    if (!order) {
-      place('<h1>That order is not on this account.</h1>', false);
-      return;
-    }
-    const meta = JSON.parse(sessionStorage.getItem('marketplace.receipts') || '{}')[number];
-    const guide = meta ? shipTiers[meta.tier] : null;
-    place(`<article class="receipt">
-      <p class="badge">Sandbox / verification mode. No funds deducted.</p>
-      <h1>${esc(order.number)}</h1>
-      <p>${order.status === 'paid' ? 'Paid' : 'Unpaid'} · ${esc(money(order.totalAmount, order.currency))}</p>
-      ${shop().rateNote()}
-      <p>${meta ? `${meta.method === 'card' ? 'Card' : 'Mobile money'} ${esc(meta.label)}` : 'Payment method was not recorded in this browser.'}</p>
-      ${guide ? `<p>Shipping guide ${esc(guide.label)}, ${esc(money(guide.cents))}. Not charged.</p>` : ''}
-      <div class="stack">${order.items.map((item) => `<p><strong>${esc(item.title)}</strong><br>${esc(item.widthCm)} × ${esc(item.heightCm)} × ${esc(item.depthCm)} cm · Reserved in this browser, simulated.</p>`).join('')}</div>
-      <ol class="timeline">
-        <li>Order recorded. Nothing was deducted.</li>
-        <li>The print is reserved in this browser only. The catalogue and the camera still have it.</li>
-        <li>An arrival notice, when one exists, stays on the orders page and does not open the camera.</li>
-      </ol>
-      <p><a href="#orders">All orders</a></p>
-    </article>`);
-  } catch (error) {
-    place(formError(error), false);
-  }
-}
-
 window.renderHome = renderHome;
 window.renderRoom = (route) => {
   if (route === '#collections') {
@@ -1084,10 +970,6 @@ window.renderRoom = (route) => {
   }
   if (route.startsWith('#artist/')) {
     renderArtist(route.slice('#artist/'.length));
-    return true;
-  }
-  if (route === '#saved') {
-    renderSaved();
     return true;
   }
   if (
@@ -1110,14 +992,6 @@ window.renderRoom = (route) => {
   }
   if (route === '#orders') {
     renderOrders();
-    return true;
-  }
-  if (route === '#checkout') {
-    renderCheckout();
-    return true;
-  }
-  if (route.startsWith('#receipt/')) {
-    renderReceipt(route.slice('#receipt/'.length));
     return true;
   }
   return false;
