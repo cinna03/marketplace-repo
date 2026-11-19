@@ -56,9 +56,22 @@ export const forgotPasswordSchema = z.object({
   email: emailSchema,
 });
 
+/** A 6-digit code sent by email, for a password reset or to confirm an address. */
+export const emailCodeSchema = z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code from the email');
+
+export const checkResetCodeSchema = z.object({
+  email: emailSchema,
+  code: emailCodeSchema,
+});
+
 export const resetPasswordSchema = z.object({
-  token: z.string().min(20),
+  email: emailSchema,
+  code: emailCodeSchema,
   password: passwordSchema,
+});
+
+export const verifyEmailSchema = z.object({
+  code: emailCodeSchema,
 });
 
 export const changePasswordSchema = z.object({
@@ -95,6 +108,8 @@ export type MfaConfirmInput = z.infer<typeof mfaConfirmSchema>;
 export type MfaChallengeInput = z.infer<typeof mfaChallengeSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type CheckResetCodeInput = z.infer<typeof checkResetCodeSchema>;
+export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type UpdateMeInput = z.infer<typeof updateMeSchema>;
 export type AddressInput = z.infer<typeof addressSchema>;
