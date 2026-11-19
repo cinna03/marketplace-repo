@@ -18,7 +18,7 @@
       <section class="auth-card"><div id="verify-step" class="step-in">
         <div class="auth-badge">${window.Cinnarios.icons.mail()}</div>
         <h1>Confirm your email</h1>
-        <p class="auth-lede">We sent a 6-digit code to <strong>${this.esc(this.email)}</strong>. You only do this once.</p>
+        <p class="auth-lede">Enter the 6-digit code for <strong>${this.esc(this.email)}</strong>. You only do this once.</p>
         <div id="verify-code"></div>
         <p class="error" id="verify-error" role="alert"></p>
         <p class="auth-foot"><button type="button" class="text-button" id="verify-cancel">Use a different email</button></p>
@@ -38,11 +38,16 @@
         },
       }).mount();
       document.querySelector('#verify-cancel')?.addEventListener('click', () => this.actions.cancel?.());
+      const note = document.querySelector('#verify-code .code-message');
+      if (note) note.textContent = 'Sending a code…';
       try {
         await this.actions.send();
+        if (note) note.textContent = 'A code was sent. Check your inbox and your spam folder.';
       } catch (err) {
-        const error = document.querySelector('#verify-error');
-        if (error) error.textContent = err.message;
+        if (note) {
+          note.classList.add('error');
+          note.textContent = err.message || 'The code could not be sent.';
+        }
       }
     }
   }

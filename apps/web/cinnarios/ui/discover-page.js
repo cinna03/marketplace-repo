@@ -29,7 +29,6 @@
           <button type="button" class="round-button" data-next aria-label="Next piece">${icons.next()}</button>
         </div>
         <a class="button discover-browse" href="#search" data-browse>Browse all ${this.esc(this.total)} pieces${icons.next()}</a>
-        <p class="discover-hint">Scroll or drag to browse · click a piece to open it</p>
       </section>
       ${DiscoverPage.tryOwnBand()}`;
     }

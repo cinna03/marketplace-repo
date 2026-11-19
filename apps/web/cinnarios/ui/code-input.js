@@ -29,7 +29,7 @@
           <div class="code-done" aria-hidden="true">${window.Cinnarios.icons.check()}</div>
           <span class="spinner" hidden></span>
         </div>
-        <p class="code-message error" role="alert"></p>
+        <p class="code-message" role="status"></p>
         <p class="code-resend"></p>`;
       this.input = this.root.querySelector('#code-entry');
       this.boxes = [...this.root.querySelectorAll('.code-box')];
@@ -110,14 +110,24 @@
       }
       line.innerHTML = '<button type="button" class="text-button" id="code-resend">Send a new code</button>';
       line.querySelector('#code-resend').addEventListener('click', async () => {
+        const note = this.root.querySelector('.code-message');
+        const button = line.querySelector('#code-resend');
+        button.disabled = true;
+        button.textContent = 'Sending…';
+        note.classList.remove('error');
+        note.textContent = 'Sending a new code…';
         try {
           await this.actions.resend();
+          note.textContent = 'A new code was sent. Check your inbox and your spam folder.';
           this.input.value = '';
           this.set('idle');
           this.startTimer();
           this.input.focus();
         } catch (err) {
-          this.root.querySelector('.code-message').textContent = err.message;
+          note.classList.add('error');
+          note.textContent = err.message || 'The code could not be sent.';
+          button.disabled = false;
+          button.textContent = 'Send a new code';
         }
       });
     }
