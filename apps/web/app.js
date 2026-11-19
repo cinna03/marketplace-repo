@@ -1,4 +1,6 @@
-const API = `${location.protocol}//${location.hostname}:3001/v1`;
+const API = window.CINNARIOS_PHONE
+  ? `${location.origin}/v1`
+  : `${location.protocol}//${location.hostname}:3001/v1`;
 const app = document.querySelector('#app');
 const cartCount = document.querySelector('#cart-count');
 
@@ -177,14 +179,11 @@ function markNav() {
   else if (
     route.startsWith('#studio') ||
     route.startsWith('#account') ||
-    route.startsWith('#upload') ||
-    route.startsWith('#ledger') ||
-    route.startsWith('#settings') ||
-    route.startsWith('#advisory') ||
     route.startsWith('#orders') ||
-    route.startsWith('#inventory') ||
-    route.startsWith('#receipt')
-  ) tab = '#studio';
+    route.startsWith('#receipt') ||
+    route === '#enter' ||
+    route === '#forgot'
+  ) tab = '#account';
   document.querySelectorAll('[data-tab]').forEach((link) => {
     if (link.getAttribute('href') === tab) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
@@ -194,6 +193,18 @@ function markNav() {
 function setPage(mode, title) {
   document.body.dataset.page = mode;
   document.title = title ? `${title} · Marketplace` : 'Marketplace';
+  let back = document.querySelector('#back');
+  if (mode === 'sheet') {
+    if (!back) {
+      back = document.createElement('a');
+      back.id = 'back';
+      back.href = '#gallery';
+      back.textContent = 'Back';
+      document.querySelector('.bar')?.prepend(back);
+    }
+  } else if (back) {
+    back.remove();
+  }
 }
 
 document.addEventListener('click', (event) => {
@@ -488,7 +499,7 @@ async function renderGallery() {
       <p class="intro">Public-domain paintings from The Met. The price is a reproduction at that size.</p>
       <div class="grid">${works.map((work) => `
       <a class="work" href="#work/${esc(work.sourceId)}">
-        <span class="frame"><img src="${esc(work.thumbnailUrl)}" alt="" style="${work.sourceId === carriedWork ? `view-transition-name: work-${esc(work.sourceId)}` : ''}" /></span>
+        <span class="frame"><img src="${esc(work.thumbnailUrl)}" alt="" loading="lazy" decoding="async" style="${work.sourceId === carriedWork ? `view-transition-name: work-${esc(work.sourceId)}` : ''}" /></span>
         <strong>${esc(work.title)}</strong>
         <span>${esc(work.artist || 'Unknown artist')}</span>
         <span class="measures">${esc(work.widthCm)} × ${esc(work.heightCm)} cm</span>
@@ -526,29 +537,18 @@ async function renderWork(sourceId) {
           <p>A reproduction at this size. Framing, a crate, and shipping are not part of this price.</p>
           <p>${esc(work.creditLine)}</p>
           <p>${esc(work.mediumDescription)}</p>
-          <p id="confidence-line">${esc(signedIn() ? confidenceSentence(current) : 'Sign in to keep whether this work still feels uncertain.')}</p>
+          <p>Shop guides for comparing: colour ${esc(window.Rooms?.colourName?.(work) || '')}, mood ${esc(window.Rooms?.moodName?.(work) || '')}, subject ${esc(window.Rooms?.subjectName?.(work) || '')}. These sort the next pictures. They are not a measurement of the paint.</p>
+          <p id="confidence-line">${esc(signedIn() ? confidenceSentence(current) : 'Sign in to keep this try with the account.')}</p>
           ${window.Rooms?.workFacts(work) || ''}
           <div class="actions">
-            <button id="add" ${signedIn() && !window.Rooms?.isReserved(sourceId) ? '' : 'disabled'}>${window.Rooms?.isReserved(sourceId) ? 'Reserved in this browser' : 'Add to cart'}</button>
             <a class="button" href="#try/${esc(sourceId)}">View in your room</a>
-            <button type="button" id="phone" class="quiet">Try this on a phone</button>
-            <a class="button quiet" href="#offer/${esc(sourceId)}">Make an offer</a>
+            <button id="add" ${signedIn() && !window.Rooms?.isReserved(sourceId) ? '' : 'disabled'}>${window.Rooms?.isReserved(sourceId) ? 'Reserved in this browser' : 'Add to cart'}</button>
             <button type="button" id="save-work" class="quiet">${window.Rooms?.isSaved(sourceId) ? 'Saved' : 'Save'}</button>
-          </div>
-          <div id="handoff" class="handoff" hidden>
-            <p>Scan this with the phone that will look at the wall. The camera hangs the painting. This page is where that try continues once a picture exists.</p>
-            <p><a id="phone-link" class="phone-link" href=""></a></p>
-            <img id="phone-qr" alt="Code that opens this try-on on a phone" width="180" height="180" />
           </div>
           ${signedIn() ? '' : '<p class="note"><a href="#enter">Sign in</a> to keep a cart.</p>'}
           <p id="work-error" class="error" role="alert"></p>
         </div>
       </article>`, sourceId, () => {
-    document.querySelector('#phone').addEventListener('click', () => {
-      showPhone(sourceId).catch((error) => {
-        document.querySelector('#work-error').textContent = error.message;
-      });
-    });
     window.Rooms?.bindWork(work);
     document.querySelector('#add').addEventListener('click', async () => {
       const button = document.querySelector('#add');
@@ -577,12 +577,29 @@ async function renderWork(sourceId) {
 
 async function showPhone(sourceId) {
   document.querySelector('#handoff').hidden = false;
-  const host = await fetch('/lan').then((response) => response.json());
-  const target = `http://${host.address}:3000/#try/${sourceId}`;
+  const host = window.CINNARIOS_PHONE ? null : await fetch('/lan').then((response) => response.json());
+  const target = window.CINNARIOS_PHONE
+    ? `${location.origin}/#try/${sourceId}`
+    : `http://${host.address}:3000/#try/${sourceId}`;
   const link = document.querySelector('#phone-link');
   link.href = target;
   link.textContent = target;
   document.querySelector('#phone-qr').src = `/qr.svg?text=${encodeURIComponent(target)}`;
+}
+
+function wallTries(catalog) {
+  let tries = [];
+  try {
+    tries = JSON.parse(localStorage.getItem('marketplace.rooms') || '{}').tries || [];
+  } catch {
+    tries = [];
+  }
+  if (!tries.length) return '<p>No wall tries yet. Open a painting in the camera and come back.</p>';
+  const byId = new Map(catalog.map((work) => [work.sourceId, work]));
+  return `<div class="suggest">${tries.map((item) => {
+    const work = byId.get(item.sourceId);
+    return work ? workLink(work, `#try/${esc(work.sourceId)}`) : '';
+  }).join('')}</div>`;
 }
 
 function suggestionSets(catalog, confidence) {
@@ -612,15 +629,12 @@ function workLink(work, href) {
 async function renderTry(sourceId) {
   carriedWork = sourceId;
   try {
-    const [work, catalog] = await Promise.all([
-      api(`/catalog/artworks/${sourceId}`),
-      api('/catalog/artworks'),
-    ]);
+    const work = await api(`/catalog/artworks/${sourceId}`);
     setPage('visit', work.title);
     const current = await loadConfidence(sourceId);
-    const swaps = catalog.filter((item) => item.sourceId !== sourceId).slice(0, 4);
-    const host = await fetch('/lan').then((response) => response.json());
-    const cameraHref = `cinnarios://try/${sourceId}?api=${encodeURIComponent(`http://${host.address}:3001`)}`;
+    const host = window.CINNARIOS_PHONE ? null : await fetch('/lan').then((response) => response.json());
+    const apiOrigin = window.CINNARIOS_PHONE ? location.origin : `http://${host.address}:3001`;
+    const cameraHref = `cinnarios://try/${sourceId}?api=${encodeURIComponent(apiOrigin)}`;
     place(`
       <article class="detail">
         <img src="${esc(work.imageUrl)}" alt="${esc(work.title)}" />
@@ -630,39 +644,17 @@ async function renderTry(sourceId) {
           <p class="measures">${esc(work.widthCm)} × ${esc(work.heightCm)} × ${esc(work.depthCm)} cm</p>
           <p class="price">${esc(money(work.priceAmount, work.currency))}</p>
           ${rateNote()}
-          <p id="confidence-line">${esc(signedIn() ? confidenceSentence(current) : 'Sign in to keep whether this work still feels uncertain.')}</p>
+          <p>${esc(work.creditLine)}</p>
+          <p>${esc(work.mediumDescription)}</p>
           <div class="actions">
             <a class="button" id="open-camera" href="${esc(cameraHref)}">Open in camera</a>
           </div>
-          <p class="note">Open on an iPhone with the Cinnarios camera installed. If the app is not on this phone, the button does nothing.</p>
-          <section class="hud" id="ar-hud">
-            <h2>In the camera</h2>
-            <p>Hold the phone until a vertical wall fills the frame, then step back far enough to judge the size. The camera warns you when you are too close.</p>
-            <p>The link is the bridge. The camera loads this record from the shop. It does not keep its own catalogue.</p>
-            <pre id="ar-payload" class="secret"></pre>
-            <div class="actions">
-              <button type="button" id="share-try" class="quiet">Share this try</button>
-              <button type="button" id="try-add" ${signedIn() ? '' : 'disabled'}>Add to cart</button>
-            </div>
-            <p id="try-error" class="error" role="alert"></p>
+          <p class="note">This opens the wall on the phone. The question starts after the painting is locked.</p>
+          <section class="block" id="decision" hidden>
+            <h2>This try</h2>
+            <p id="decision-line"></p>
           </section>
-          <section class="block">
-            <h2>On the wall</h2>
-            <p>The phone looks for a wall. A tap puts this painting on it. You slide it to the spot you want, then walk around. Walking does not move it. When the spot is right, you place it and lock it. Locking takes a picture, and this page is where that picture continues.</p>
-            <p>After a lock, moving the painting is a separate choice. Changing your mind about the place means scanning the wall again. Until then, this try keeps the painting on that wall. It is not a new session.</p>
-          </section>
-          <section class="block">
-            <h2>What this picture is</h2>
-            <p>${esc(work.creditLine)}</p>
-            <p>${esc(work.mediumDescription)}</p>
-            <p>This is the museum’s record: who made it, when, and what it is made of. A fuller account of what the picture represents is not in that record yet, so this page will not invent one.</p>
-          </section>
-          <section class="block">
-            <h2>If this is not the one</h2>
-            <p>Swapping keeps the place on the wall and changes the picture. Each picture keeps its own centimetres. Liking or leaving this one is what the next suggestions follow.</p>
-            <div class="suggest">${swaps.map((item) => workLink(item, `#try/${esc(item.sourceId)}`)).join('')}</div>
-          </section>
-          <p class="note"><a href="#account">The gallery</a> keeps the locked picture and the picture from the decision, so you can send them or look back.</p>
+          <p id="try-error" class="error" role="alert"></p>
         </div>
       </article>`, sourceId, () => window.Rooms?.bindTry(work, cameraHref));
   } catch (error) {
@@ -857,31 +849,17 @@ async function renderAccount() {
         ${orders.length ? orders.map((order) => `<p>${esc(order.number)} · ${esc(orderLabel(order.status))} · ${esc(money(order.totalAmount, order.currency))}</p>`).join('') : '<p>No orders yet. Nothing is on its way.</p>'}
       </section>
       <section class="block">
-        <h2>Gallery</h2>
-        <p>One picture is kept when you lock a place on the wall, and another when you decide. They stay here so you can send them to someone, or look back later.</p>
-        <p>No pictures yet. A try-on has not locked a place.</p>
+        <h2>Tries on your wall</h2>
+        <p>Each painting you put on the wall is kept here. Open one to hang it again in the same kind of visit.</p>
+        ${wallTries(catalog)}
       </section>
       <section class="block">
         <h2>Paintings you have opened</h2>
         <p>${confidenceLine} Opening one again counts as coming back to it.</p>
         ${works}
       </section>
-      <section class="block">
-        <h2>Artist name</h2>
-        <p>${artist ? `Saved as ${esc(artist.slug)}.` : 'Only if you also want a public name beside the museum works.'}</p>
-        <button type="button" id="show-artist" class="quiet">${artist ? 'Edit artist name' : 'Add an artist name'}</button>
-        <form id="artist-form" hidden>
-          <label for="artistName">Name</label>
-          <input id="artistName" name="displayName" required minlength="2" value="${esc(artist?.displayName || collector.displayName)}" />
-          <label for="bio">Short note</label>
-          <textarea id="bio" name="bio">${esc(artist?.bio || '')}</textarea>
-          <label for="website">Website</label>
-          <input id="website" name="website" type="url" value="${esc(artist?.website || '')}" />
-          <button type="submit">${artist ? 'Save artist name' : 'Save artist name'}</button>
-          <p id="artist-result"></p>
-        </form>
-      </section>`, false, () => {
-      bindAccount(Boolean(artist));
+      `, false, () => {
+      bindAccount();
     });
   } catch (error) {
     place(formError(error), false);
@@ -899,7 +877,7 @@ function profileBody(form) {
   return body;
 }
 
-function bindAccount(hasArtist) {
+function bindAccount() {
   document.querySelector('#collector-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const result = document.querySelector('#collector-result');
@@ -916,26 +894,6 @@ function bindAccount(hasArtist) {
       result.className = 'error';
       result.textContent = error.message;
     }
-  });
-  document.querySelector('#artist-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const result = document.querySelector('#artist-result');
-    try {
-      const saved = await api('/me/artist', {
-        method: hasArtist ? 'PATCH' : 'POST',
-        body: JSON.stringify(profileBody(event.currentTarget)),
-      });
-      result.className = '';
-      result.textContent = `Saved as ${saved.slug}.`;
-    } catch (error) {
-      result.className = 'error';
-      result.textContent = error.message;
-    }
-  });
-  document.querySelector('#show-artist')?.addEventListener('click', () => {
-    document.querySelector('#artist-form').hidden = false;
-    document.querySelector('#show-artist').hidden = true;
-    document.querySelector('#artistName').focus();
   });
   document.querySelector('#mfa-start')?.addEventListener('click', async () => {
     const box = document.querySelector('#mfa-enroll');
