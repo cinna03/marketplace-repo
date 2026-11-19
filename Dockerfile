@@ -13,4 +13,4 @@ ENV NODE_ENV=production
 ENV PORT=8080
 ENV WEB_ROOT=/app/apps/web
 EXPOSE 8080
-CMD ["sh", "-c", "npx prisma migrate deploy --schema apps/api/prisma/schema.prisma && node apps/api/dist/main.js"]
+CMD ["sh", "-c", "export DIRECT_URL=\"${DIRECT_URL:-$DATABASE_URL}\"; npx prisma migrate deploy --schema apps/api/prisma/schema.prisma && node apps/api/dist/main.js"]

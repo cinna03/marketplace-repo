@@ -799,8 +799,20 @@ async function renderAccount() {
   }
 }
 
+async function uploadWallPhoto(file) {
+  const headers = {};
+  const token = sessionStorage.getItem(tokenKey);
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const body = new FormData();
+  body.append('photo', file);
+  const response = await fetch(`${API}/me/wall-photos`, { method: 'POST', body, headers, credentials: 'include' });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || 'The photo could not be saved.');
+  return payload.url;
+}
+
 window.Shop = {
-  api, esc, money, rateNote, place, setPage, signedIn, formError, refreshCartCount, sessionId, openPieceInSpace, syncLibrary,
+  api, esc, money, rateNote, place, setPage, signedIn, formError, refreshCartCount, sessionId, openPieceInSpace, syncLibrary, uploadWallPhoto,
 };
 
 app.addEventListener('click', (event) => {

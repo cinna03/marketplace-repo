@@ -10,8 +10,11 @@ import {
   Post,
   Put,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AddressInput, UpdateAddressInput, UpdateMeInput, addressSchema, librarySchema, updateAddressSchema, updateMeSchema } from '@marketplace/contracts';
 import { Request } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -19,12 +22,16 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { RequestUser } from '../common/types';
+import { WallPhotoService } from '../storage/wall-photo.service';
 import { UsersService } from './users.service';
 
 @Controller('me')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly photos: WallPhotoService,
+  ) {}
 
   @Get()
   getMe(@CurrentUser() user: RequestUser) {
@@ -47,6 +54,15 @@ export class UsersController {
   @Get('library')
   library(@CurrentUser() user: RequestUser) {
     return this.users.library(user.id);
+  }
+
+  @Post('wall-photos')
+  @UseInterceptors(FileInterceptor('photo', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  uploadWallPhoto(
+    @CurrentUser() user: RequestUser,
+    @UploadedFile() file: { buffer?: Buffer; mimetype?: string },
+  ) {
+    return this.photos.save(user.id, file);
   }
 
   @Put('library')

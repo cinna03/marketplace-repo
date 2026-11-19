@@ -81,7 +81,7 @@ export const librarySchema = z.object({
         sourceId: sourceIdSchema,
         at: z.string().datetime(),
         outcome: z.enum(['satisfied', 'declined', 'uncertain']).optional(),
-        image: z.string().regex(/^[\w.-]{1,80}$/).optional(),
+        image: z.string().max(2000).refine((value) => /^[\w.-]{1,80}$/.test(value) || /^https:\/\/(?:firebasestorage\.googleapis\.com|storage\.googleapis\.com)\//.test(value), 'A wall photo must be a saved file name or a Firebase address.').optional(),
       }),
     )
     .max(200),

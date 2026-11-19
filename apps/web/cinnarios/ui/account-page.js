@@ -3,6 +3,10 @@
 // an address and signing out go through `actions`.
 (function () {
   const VERDICTS = Object.freeze({ satisfied: 'Liked it', declined: 'Not for this wall' });
+
+  function wallPicture(image) {
+    return /^https:\/\//.test(image) ? image : `${location.origin}/wall-tries/${image}`;
+  }
   const SAVED_SHOWN = 4;
 
   /** "Today", "This week", or a short date: how long ago a try happened. */
@@ -69,7 +73,7 @@
       const body = tries.length
         ? `<div class="tries-row">${tries.map(({ work, at, outcome, image }) => `
             <a class="try-card" href="#work/${esc(work.sourceId)}/account">
-              <span class="try-picture">${image ? `<img src="${esc(`${location.origin}/wall-tries/${image}`)}" alt="${esc(work.title)} on your wall" />` : `<img src="${esc(work.thumbnailUrl || work.imageUrl)}" alt="" />`}</span>
+              <span class="try-picture">${image ? `<img src="${esc(wallPicture(image))}" alt="${esc(work.title)} on your wall" />` : `<img src="${esc(work.thumbnailUrl || work.imageUrl)}" alt="" />`}</span>
               <span class="try-when">${esc(whenLabel(at))}</span>
               <strong>${esc(work.title)}</strong>
               <span class="tag ${outcome === 'satisfied' ? 'tag-blush' : ''}">${esc(VERDICTS[outcome] || 'Not sure yet')}</span>

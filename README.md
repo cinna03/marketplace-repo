@@ -102,6 +102,12 @@ node apps/web/server.mjs
 
 Open **http://localhost:3000**. The first time, press Cmd+Shift+R (Ctrl+Shift+R on Windows) so the browser loads the newest pages.
 
+### Database and wall photos
+
+The API is a Postgres client. Locally that database is on this computer. On the public shop it can be a [Supabase](https://supabase.com) database: set `DATABASE_URL` to Supabase's pooler address and `DIRECT_URL` to the direct address (port 5432). Sign-in stays in this API.
+
+A signed-in buyer can upload a wall photo with `POST /v1/me/wall-photos`. The file is stored in Firebase Storage when `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` and `FIREBASE_STORAGE_BUCKET` are set. Until they are set, that upload answers that photos are not connected yet. The rest of the shop keeps working.
+
 ### Email
 
 Confirmation and password reset send a 6-digit code to the account email. Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` and `SMTP_FROM` in `apps/api/.env`. Signing out keeps the account. Only **Delete account** removes it.

@@ -1,4 +1,8 @@
 const roomKey = 'marketplace.rooms';
+
+function wallPicture(image) {
+  return /^https:\/\//.test(image) ? image : `${location.origin}/wall-tries/${image}`;
+}
 const colourGuide = {
   436535: 'gold',
   436532: 'blue',
@@ -259,7 +263,7 @@ function showWallOutcome(work, outcome, image) {
   line.replaceChildren();
   if (image && /^[\w.-]+$/.test(image)) {
     const picture = document.createElement('img');
-    picture.src = `${location.origin}/wall-tries/${image}`;
+    picture.src = wallPicture(image);
     picture.alt = 'The view saved from the wall';
     line.append(picture);
   }
