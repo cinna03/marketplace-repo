@@ -54,11 +54,29 @@ function rateNote() {
   return '<p class="note">Shown in francs at the National Bank of Rwanda average for 17 Nov 2026: 1 USD = 1,477.385 RWF. The price is still recorded in dollars.</p>';
 }
 
+// Each page visit gets its own signal. Moving to another page cancels the reads still in
+// flight for the old one, so a slow page can never finish late and replace the new page.
+let visit = new AbortController();
+
+function newVisit() {
+  visit.abort();
+  visit = new AbortController();
+}
+
 async function api(path, options = {}) {
   const headers = { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) };
   const token = sessionStorage.getItem(tokenKey);
   if (token) headers.Authorization = `Bearer ${token}`;
-  let response = await fetch(API + path, { ...options, headers, credentials: 'include' });
+  const reading = !options.method || options.method === 'GET';
+  const signal = reading ? visit.signal : undefined;
+  let response;
+  try {
+    response = await fetch(API + path, { ...options, headers, credentials: 'include', signal });
+  } catch (error) {
+    // A read for a page the buyer has left: never settle, so that page never draws.
+    if (error.name === 'AbortError') return new Promise(() => {});
+    throw error;
+  }
   if (response.status === 401 && token && !path.startsWith('/auth/')) {
     const refreshed = await fetch(API + '/auth/refresh', {
       method: 'POST',
@@ -70,7 +88,7 @@ async function api(path, options = {}) {
       const data = await refreshed.json();
       sessionStorage.setItem(tokenKey, data.accessToken);
       headers.Authorization = `Bearer ${data.accessToken}`;
-      response = await fetch(API + path, { ...options, headers, credentials: 'include' });
+      response = await fetch(API + path, { ...options, headers, credentials: 'include', signal });
     } else {
       sessionStorage.removeItem(tokenKey);
     }
@@ -108,7 +126,7 @@ async function refreshCartCount() {
 }
 
 function formError(error) {
-  return `<p class="error">${error.message}</p>`;
+  return window.Cinnarios.PageStates.error(error, esc);
 }
 
 async function journey(kind, sourceId) {
@@ -126,7 +144,18 @@ function motionOk() {
   return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+// If a page takes more than a moment, grey placeholders show until it arrives.
+let loadingTimer = 0;
+
+function showLoadingSoon() {
+  clearTimeout(loadingTimer);
+  loadingTimer = setTimeout(() => {
+    app.innerHTML = window.Cinnarios.PageStates.loading();
+  }, 180);
+}
+
 function place(html, carry, after) {
+  clearTimeout(loadingTimer);
   const apply = () => {
     app.innerHTML = html;
     after?.();
@@ -200,12 +229,16 @@ function markNav() {
     route.startsWith('#orders') ||
     route.startsWith('#receipt') ||
     route === '#enter' ||
+    route === '#join' ||
+    route === '#verify' ||
     route === '#forgot'
   ) tab = '#account';
   document.querySelectorAll('[data-tab]').forEach((link) => {
     if (link.getAttribute('href') === tab) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   });
+  const onCart = route === '#cart' || route === '#checkout';
+  document.querySelector('#cart-link')?.toggleAttribute('aria-current', onCart);
 }
 
 function setPage(mode, title) {
@@ -241,10 +274,11 @@ document.addEventListener('click', (event) => {
 });
 
 async function render() {
+  newVisit();
   markNav();
   const route = location.hash || '#home';
-  if (!painted) app.innerHTML = '<p class="loading">Opening the works.</p>';
-  if (route === '#home') return window.renderHome?.();
+  showLoadingSoon();
+  if (route === '#home') return renderHome();
   if (route.startsWith('#work/')) return renderWork(route.slice('#work/'.length).split('/')[0], route.split('/')[2]);
   if (route.startsWith('#try/')) return renderTry(route.slice('#try/'.length).split('/')[0]);
   if (route === '#cart') return renderCart();
@@ -254,245 +288,106 @@ async function render() {
   if (route === '#try-own') return renderTryOwn();
   if (route === '#account') return renderAccount();
   if (route === '#enter') return renderAuth();
-  if (route === '#forgot') return renderForgot();
-  if (route === '#reset') return renderReset();
+  if (route === '#join') return renderAuth('up');
+  if (route === '#verify') return renderVerify();
+  if (route === '#forgot' || route === '#reset') return renderForgot();
   if (route === '#search') return renderSearch();
   if (route === '#gallery' || route === '#discover') return renderDiscover();
   if (window.renderRoom?.(route)) return undefined;
   return renderGallery();
 }
 
+/** Keeps the access token from a sign-in, or explains why it could not finish. */
 function acceptSession(result) {
   if (result.mfaRequired) {
-    sessionStorage.setItem('marketplace.mfa', result.mfaToken);
-    const mfaForm = document.querySelector('#mfa-form');
-    if (mfaForm) {
-      mfaForm.hidden = false;
-      mfaForm.dataset.token = result.mfaToken;
+    throw new Error('This account still has the old two-step sign-in turned on, which this version no longer offers.');
+  }
+  sessionStorage.setItem(tokenKey, result.accessToken);
+}
+
+/** Puts Google's own sign-in button into a slot, when the server has a Google client id. */
+function mountGoogle(slot) {
+  api('/auth/providers').then((providers) => {
+    if (!providers.googleClientId) return;
+    slot.closest('form')?.querySelector('[data-or]')?.removeAttribute('hidden');
+    const start = () => {
+      const google = window.google;
+      if (!google?.accounts?.id) return;
+      google.accounts.id.initialize({
+        client_id: providers.googleClientId,
+        callback: async (response) => {
+          try {
+            acceptSession(await api('/auth/oauth/google', { method: 'POST', body: JSON.stringify({ idToken: response.credential }) }));
+            location.hash = '#account';
+          } catch (error) {
+            const node = slot.closest('form')?.querySelector('[data-error]');
+            if (node) node.textContent = error.message;
+          }
+        },
+      });
+      google.accounts.id.renderButton(slot, { theme: 'outline', size: 'large', text: 'continue_with', shape: 'pill', width: Math.min(slot.clientWidth || 320, 400) });
+    };
+    if (window.google?.accounts?.id) {
+      start();
       return;
     }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.onload = start;
+    document.head.appendChild(script);
+  }).catch(() => { /* Email sign-in still works without Google. */ });
+}
+
+function renderAuth(start = 'in') {
+  setPage('visit', start === 'up' ? 'Create account' : 'Sign in');
+  const page = new window.Cinnarios.SignInPage({
+    signIn: async ({ email, password }) => {
+      acceptSession(await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }));
+      await refreshCartCount();
+      location.hash = '#account';
+    },
+    create: async ({ name, email, password }) => {
+      acceptSession(await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) }));
+      try {
+        await api('/me/collector', { method: 'PATCH', body: JSON.stringify({ displayName: name.trim() }) });
+      } catch {
+        /* The name can be set later from Account. */
+      }
+      sessionStorage.setItem('cinnarios.verifyEmail', email);
+      location.hash = '#verify';
+    },
+    mountGoogle,
+    pictures: async () => (await api('/catalog/artworks')).slice(0, 2).map((work) => work.thumbnailUrl || work.imageUrl),
+  }, { esc }, start);
+  place(page.html(), false, () => page.bind());
+}
+
+function renderVerify() {
+  setPage('visit', 'Confirm your email');
+  if (!signedIn()) {
     location.hash = '#enter';
     return;
   }
-  sessionStorage.removeItem('marketplace.mfa');
-  sessionStorage.setItem(tokenKey, result.accessToken);
-  location.hash = '#home';
-}
-
-function renderAuth() {
-  setPage('sheet', 'Sign in');
-  place(`
-    <h1>Come in.</h1>
-    <p>Create an account or sign in. The profile, cart, and confidence record stay with this account.</p>
-    <form id="auth-form">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" autocomplete="username" required />
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="new-password" minlength="12" required />
-      <p class="note">At least 12 characters, with upper and lower case letters and a number.</p>
-      <button type="submit" data-mode="register">Create account</button>
-      <button type="submit" class="quiet" data-mode="login">Sign in</button>
-      <p id="auth-error" class="error"></p>
-      <p><a href="#forgot">Forgot password</a></p>
-    </form>
-    <div id="providers"></div>
-    <form id="mfa-form" hidden>
-      <label for="code">Authentication code</label>
-      <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required />
-      <button type="submit">Confirm code</button>
-    </form>`, false, () => {
-  const form = document.querySelector('#auth-form');
-  form.addEventListener('click', (event) => {
-    const button = event.target.closest('button');
-    if (button) form.dataset.mode = button.dataset.mode;
-  });
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const data = new FormData(form);
-    const mode = form.dataset.mode || 'register';
-    try {
-      const result = await api(mode === 'login' ? '/auth/login' : '/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({ email: data.get('email'), password: data.get('password') }),
-      });
-      acceptSession(result);
-    } catch (error) {
-      document.querySelector('#auth-error').textContent = error.message;
-    }
-  });
-  document.querySelector('#mfa-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const mfaForm = event.currentTarget;
-    try {
-      const result = await api('/auth/mfa/challenge', {
-        method: 'POST',
-        body: JSON.stringify({ mfaToken: mfaForm.dataset.token, code: new FormData(mfaForm).get('code') }),
-      });
-      acceptSession(result);
-    } catch (error) {
-      document.querySelector('#auth-error').textContent = error.message;
-    }
-  });
-  loadProviders();
-  });
+  const email = sessionStorage.getItem('cinnarios.verifyEmail') || 'your email';
+  const page = new window.Cinnarios.VerifyPage(email, {
+    send: () => api('/auth/email/send-code', { method: 'POST', body: '{}' }),
+    verify: async (code) => {
+      await api('/auth/email/verify', { method: 'POST', body: JSON.stringify({ code }) });
+      sessionStorage.removeItem('cinnarios.verifyEmail');
+    },
+  }, { esc });
+  place(page.html(), false, () => page.bind());
 }
 
 function renderForgot() {
-  setPage('sheet', 'Reset password');
-  place(`
-    <h1>Reset the password.</h1>
-    <p>Enter the account email. This local server shows the reset link here, because mail is only written to the API log.</p>
-    <form id="forgot-form">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" autocomplete="username" required />
-      <button type="submit">Send reset link</button>
-      <p id="forgot-result"></p>
-    </form>`, false, () => {
-    document.querySelector('#forgot-form').addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const result = document.querySelector('#forgot-result');
-      result.className = '';
-      result.textContent = '';
-      try {
-        const body = await api('/auth/password/forgot', {
-          method: 'POST',
-          body: JSON.stringify({ email: new FormData(event.currentTarget).get('email') }),
-        });
-        result.textContent = body.message;
-        if (body.resetUrl) {
-          const link = document.createElement('a');
-          link.href = body.resetUrl;
-          link.textContent = 'Open the reset link';
-          result.append(document.createElement('br'), link);
-        }
-      } catch (error) {
-        result.className = 'error';
-        result.textContent = error.message;
-      }
-    });
-  });
-}
-
-function renderReset() {
-  setPage('sheet', 'New password');
-  const token = sessionStorage.getItem('marketplace.reset') || '';
-  place(`
-    <h1>Choose a new password.</h1>
-    <form id="reset-form">
-      <label for="password">New password</label>
-      <input id="password" name="password" type="password" autocomplete="new-password" minlength="12" required />
-      <p class="note">At least 12 characters, with upper and lower case letters and a number.</p>
-      <button type="submit" ${token ? '' : 'disabled'}>Update password</button>
-      <p id="reset-result" class="${token ? '' : 'error'}">${token ? '' : 'This reset link is missing its token.'}</p>
-    </form>`, false, () => {
-    document.querySelector('#reset-form').addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const result = document.querySelector('#reset-result');
-      try {
-        await api('/auth/password/reset', {
-          method: 'POST',
-          body: JSON.stringify({ token, password: new FormData(event.currentTarget).get('password') }),
-        });
-        sessionStorage.removeItem('marketplace.reset');
-        result.className = '';
-        result.textContent = 'Password updated.';
-        const link = document.createElement('a');
-        link.href = '#enter';
-        link.textContent = 'Sign in';
-        result.append(document.createElement('br'), link);
-      } catch (error) {
-        result.className = 'error';
-        result.textContent = error.message;
-      }
-    });
-  });
-}
-
-function loadProviders() {
-  const slot = document.querySelector('#providers');
-  if (!slot) return;
-  api('/auth/providers').then((providers) => {
-    if (!providers.googleClientId && !providers.appleClientId) {
-      slot.innerHTML = '<p class="note">Google and Apple sign-in run once a client id is set for this server.</p>';
-      return;
-    }
-    if (providers.googleClientId) slot.insertAdjacentHTML('beforeend', '<div id="google-button"></div>');
-    if (providers.appleClientId) slot.insertAdjacentHTML('beforeend', '<button type="button" id="apple-button" class="quiet">Continue with Apple</button>');
-    if (providers.googleClientId) mountGoogle(providers.googleClientId);
-    if (providers.appleClientId) mountApple(providers.appleClientId);
-  }).catch((error) => {
-    slot.innerHTML = `<p class="error">${esc(error.message)}</p>`;
-  });
-}
-
-function mountGoogle(clientId) {
-  const start = () => {
-    const google = window.google;
-    if (!google?.accounts?.id) return;
-    google.accounts.id.initialize({
-      client_id: clientId,
-      callback: async (response) => {
-        try {
-          acceptSession(await api('/auth/oauth/google', {
-            method: 'POST',
-            body: JSON.stringify({ idToken: response.credential }),
-          }));
-        } catch (error) {
-          const node = document.querySelector('#auth-error');
-          if (node) node.textContent = error.message;
-        }
-      },
-    });
-    google.accounts.id.renderButton(document.querySelector('#google-button'), {
-      theme: 'outline',
-      size: 'large',
-      text: 'continue_with',
-      shape: 'pill',
-    });
-  };
-  if (window.google?.accounts?.id) {
-    start();
-    return;
-  }
-  const script = document.createElement('script');
-  script.src = 'https://accounts.google.com/gsi/client';
-  script.async = true;
-  script.onload = start;
-  document.head.appendChild(script);
-}
-
-function mountApple(clientId) {
-  const start = () => {
-    const apple = window.AppleID;
-    if (!apple?.auth) return;
-    apple.auth.init({
-      clientId,
-      scope: 'name email',
-      redirectURI: location.origin,
-      usePopup: true,
-    });
-    document.querySelector('#apple-button').addEventListener('click', async () => {
-      try {
-        const response = await apple.auth.signIn();
-        acceptSession(await api('/auth/oauth/apple', {
-          method: 'POST',
-          body: JSON.stringify({ idToken: response.authorization.id_token }),
-        }));
-      } catch (error) {
-        const node = document.querySelector('#auth-error');
-        if (node) node.textContent = error.message || 'Apple sign-in was cancelled.';
-      }
-    });
-  };
-  if (window.AppleID?.auth) {
-    start();
-    return;
-  }
-  const script = document.createElement('script');
-  script.src = 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js';
-  script.async = true;
-  script.onload = start;
-  document.head.appendChild(script);
+  setPage('visit', 'Reset password');
+  const page = new window.Cinnarios.ResetPage({
+    sendCode: (email) => api('/auth/password/forgot', { method: 'POST', body: JSON.stringify({ email }) }),
+    checkCode: (email, code) => api('/auth/password/check-code', { method: 'POST', body: JSON.stringify({ email, code }) }),
+    reset: (email, code, password) => api('/auth/password/reset', { method: 'POST', body: JSON.stringify({ email, code, password }) }),
+  }, { esc });
+  place(page.html(), false, () => page.bind());
 }
 
 async function loadConfidence(sourceId) {
@@ -548,6 +443,17 @@ function backHref(from) {
 
 function describeFeel(work) {
   return { subject: window.Rooms.subjectName(work), mood: window.Rooms.moodName(work), colour: window.Rooms.colourName(work) };
+}
+
+async function renderHome() {
+  setPage('visit', 'Home');
+  try {
+    const catalog = await api('/catalog/artworks');
+    const page = new window.Cinnarios.HomePage(catalog, describeFeel, { esc, money });
+    place(page.html(), false, () => page.bind());
+  } catch (error) {
+    place(formError(error), false);
+  }
 }
 
 async function renderDiscover() {
@@ -606,7 +512,7 @@ async function renderWork(sourceId, from) {
         toggleSaved: () => window.Rooms.toggleSaved(sourceId),
         addToCart: async () => {
           if (window.Rooms.isReserved(sourceId)) {
-            throw new Error('This browser already reserved that print in a sandbox order. Release it on this page to add it again.');
+            throw new Error('This print is already reserved in this browser. Release it on this page to add it again.');
           }
           await api('/cart/items', { method: 'POST', body: JSON.stringify({ sourceId, quantity: 1 }) });
           await refreshCartCount();
@@ -807,15 +713,13 @@ async function renderAccount() {
   }
 }
 
-if (location.pathname === '/reset-password') {
-  const token = new URLSearchParams(location.search).get('token');
-  if (token) sessionStorage.setItem('marketplace.reset', token);
-  history.replaceState(null, '', '/#reset');
-}
-
 window.Shop = {
   api, esc, money, rateNote, place, setPage, signedIn, formError, refreshCartCount, sessionId, openPieceInSpace,
 };
+
+app.addEventListener('click', (event) => {
+  if (event.target.closest('[data-retry]')) render();
+});
 
 window.addEventListener('hashchange', () => {
   render();

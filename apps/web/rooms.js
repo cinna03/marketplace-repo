@@ -498,29 +498,6 @@ window.Rooms = {
   subjectName: subjectOf,
 };
 
-async function renderHome() {
-  const { api, esc, place, setPage, money } = shop();
-  setPage('visit', 'Home');
-  try {
-    const works = await api('/catalog/artworks');
-    const hero = works[0];
-    place(`
-      <h1>Home</h1>
-      <p class="intro">Public-domain paintings from The Met, at the centimetres the museum recorded.</p>
-      <a class="hero" href="#work/${esc(hero.sourceId)}/home">
-        <img src="${esc(hero.imageUrl)}" alt="${esc(hero.title)}" />
-        <strong>${esc(hero.title)}</strong>
-        <span>${esc(hero.artist || 'Unknown artist')} · ${esc(money(hero.priceAmount, hero.currency))}</span>
-      </a>
-      <div class="actions">
-        <a class="button" href="#gallery">Discover</a>
-        <a class="button quiet" href="#search">Search</a>
-      </div>`);
-  } catch (error) {
-    place(shop().formError(error), false);
-  }
-}
-
 async function renderCollections() {
   const { api, esc, place, setPage } = shop();
   setPage('visit', 'Collections');
@@ -865,7 +842,7 @@ async function renderOrders() {
   try {
     const orders = await api('/orders');
     place(`<h1>Orders</h1>
-      <p>An arrival notice stays on this page. It does not open the camera. Payment is still outside this version.</p>
+      <p>An arrival notice stays on this page.</p>
       ${orders.length ? `<div class="stack">${orders.map((order) => `<a class="line-link" href="#receipt/${esc(order.number)}"><strong>${esc(order.number)}</strong><span>${order.status === 'paid' ? 'Paid' : 'Unpaid'} · ${esc(money(order.totalAmount, order.currency))}</span></a>`).join('')}</div>` : '<p>No orders yet.</p>'}`);
   } catch (error) {
     place(formError(error), false);
@@ -966,7 +943,6 @@ function shake(form, message) {
   if (error) error.textContent = message;
 }
 
-window.renderHome = renderHome;
 window.renderRoom = (route) => {
   if (route === '#collections') {
     renderCollections();
