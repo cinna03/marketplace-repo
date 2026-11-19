@@ -3,11 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { OauthProvider, Prisma, UserStatus } from '@prisma/client';
 import { ApiError, isUniqueViolation } from '../common/errors';
-import { PasswordService } from '../common/crypto/password.service';
+import { PasswordService, randomToken, sha256 } from '../common/crypto/password.service';
 import { Mailer } from '../mail/mailer';
 import { PrismaService } from '../prisma/prisma.service';
 import { MfaService } from './mfa.service';
-import { EmailCodeService } from './email-code.service';
 import { OauthProfile } from './oauth-claims';
 import { OauthService } from './oauth.service';
 import { displayNameFromEmail } from '../profiles/display-name';
@@ -48,7 +47,6 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly mailer: Mailer,
     private readonly config: ConfigService,
-    private readonly codes: EmailCodeService,
   ) {}
 
   async register(email: string, password: string, ip?: string): Promise<SessionResult> {
@@ -149,34 +147,30 @@ export class AuthService {
     return { ...session, user: this.publicUser(user) };
   }
 
-  /** Emails a reset code when the account exists. Returns the code (shown only in development). */
   async forgotPassword(email: string): Promise<string | null> {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user || user.status !== UserStatus.active) return null;
-    const code = await this.codes.issue(user.id, 'password_reset');
-    await this.mailer.sendCode(user.email, 'password_reset', code);
-    return code;
-  }
 
-  /** Checks a reset code without using it up, so the buyer can move on to the new password. */
-  async checkResetCode(email: string, code: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) throw new ApiError(400, 'CODE_INVALID', 'That code is not right. Check the email and try again.');
-    await this.codes.check(user.id, 'password_reset', code);
-  }
+    const raw = randomToken();
+    const tokenHash = sha256(raw);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      await tx.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        },
+      });
+    });
 
-  /** Emails a code that confirms the account's address. Returns the code (shown only in development). */
-  async sendEmailCode(userId: string): Promise<string | null> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user || user.emailVerifiedAt) return null;
-    const code = await this.codes.issue(user.id, 'email_verify');
-    await this.mailer.sendCode(user.email, 'email_verify', code);
-    return code;
-  }
-
-  async verifyEmail(userId: string, code: string): Promise<void> {
-    await this.codes.check(userId, 'email_verify', code, { consume: true });
-    await this.prisma.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() } });
+    const url = new URL('/reset-password', this.config.getOrThrow<string>('APP_WEB_URL'));
+    url.searchParams.set('token', raw);
+    await this.mailer.sendPasswordReset(user.email, url.toString());
+    return url.toString();
   }
 
   async changePassword(userId: string, currentPassword: string, password: string, ip?: string): Promise<void> {
@@ -207,23 +201,33 @@ export class AuthService {
     });
   }
 
-  async resetPassword(email: string, code: string, password: string, ip?: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) throw new ApiError(400, 'CODE_INVALID', 'That code is not right. Check the email and try again.');
+  async resetPassword(token: string, password: string, ip?: string): Promise<void> {
+    const tokenHash = sha256(token);
+    const reset = await this.prisma.passwordResetToken.findUnique({ where: { tokenHash } });
+    if (!reset || reset.usedAt || reset.expiresAt.getTime() <= Date.now()) {
+      throw new ApiError(400, 'RESET_TOKEN_INVALID', 'This reset link is invalid or has expired.');
+    }
+
     const passwordHash = await this.passwords.hash(password);
     await this.prisma.$transaction(async (tx) => {
-      await this.codes.check(user.id, 'password_reset', code, { consume: true, client: tx });
+      const claimed = await tx.passwordResetToken.updateMany({
+        where: { id: reset.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      if (claimed.count !== 1) {
+        throw new ApiError(400, 'RESET_TOKEN_INVALID', 'This reset link is invalid or has expired.');
+      }
       await tx.user.update({
-        where: { id: user.id },
+        where: { id: reset.userId },
         data: { passwordHash, tokenVersion: { increment: 1 } },
       });
-      await this.tokens.revokeAllForUser(user.id, tx);
+      await this.tokens.revokeAllForUser(reset.userId, tx);
       await tx.auditLog.create({
         data: {
-          actorId: user.id,
+          actorId: reset.userId,
           action: 'auth.password_reset',
           entityType: 'user',
-          entityId: user.id,
+          entityId: reset.userId,
           ip,
         },
       });

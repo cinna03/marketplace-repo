@@ -1,8 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { EmailCodeKind, Mailer } from './mailer';
+import { Mailer } from './mailer';
 
-/** Development mailer: writes the code to the API log instead of sending an email. */
 @Injectable()
 export class LogMailer extends Mailer {
   private readonly logger = new Logger(LogMailer.name);
@@ -11,11 +10,11 @@ export class LogMailer extends Mailer {
     super();
   }
 
-  async sendCode(to: string, kind: EmailCodeKind, code: string): Promise<void> {
+  async sendPasswordReset(to: string, resetUrl: string): Promise<void> {
     if (this.config.get<string>('NODE_ENV') === 'development') {
-      this.logger.log(`${kind === 'password_reset' ? 'Password reset' : 'Email confirmation'} code for ${to}: ${code}`);
+      this.logger.log(`Password reset for ${to}: ${resetUrl}`);
       return;
     }
-    this.logger.error('The mailer is not configured, so the code was not sent');
+    this.logger.error('Password reset mailer is not configured');
   }
 }

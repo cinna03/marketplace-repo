@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import {
   changePasswordSchema,
-  checkResetCodeSchema,
   forgotPasswordSchema,
   loginSchema,
   mfaChallengeSchema,
@@ -12,7 +11,6 @@ import {
   refreshSchema,
   registerSchema,
   resetPasswordSchema,
-  verifyEmailSchema,
 } from '@marketplace/contracts';
 import { Request, Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -144,47 +142,21 @@ export class AuthController {
   @HttpCode(202)
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   async forgot(@Body(new ZodValidationPipe(forgotPasswordSchema)) body: { email: string }) {
-    const code = await this.auth.forgotPassword(body.email);
-    return { message: 'If an account exists for that email, a code is on the way.', ...this.devCode(code) };
-  }
-
-  @Post('password/check-code')
-  @HttpCode(204)
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
-  async checkCode(@Body(new ZodValidationPipe(checkResetCodeSchema)) body: { email: string; code: string }) {
-    await this.auth.checkResetCode(body.email, body.code);
+    const resetUrl = await this.auth.forgotPassword(body.email);
+    const local = this.config.get<string>('NODE_ENV') === 'development';
+    return {
+      message: 'If an account exists for that email, a reset link is on the way.',
+      ...(local && resetUrl ? { resetUrl } : {}),
+    };
   }
 
   @Post('password/reset')
   @HttpCode(204)
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
   async reset(
-    @Body(new ZodValidationPipe(resetPasswordSchema)) body: { email: string; code: string; password: string },
+    @Body(new ZodValidationPipe(resetPasswordSchema)) body: { token: string; password: string },
     @Req() request: Request,
   ) {
-    await this.auth.resetPassword(body.email, body.code, body.password, request.ip);
-  }
-
-  @Post('email/send-code')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(202)
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
-  async sendEmailCode(@CurrentUser() user: RequestUser) {
-    const code = await this.auth.sendEmailCode(user.id);
-    return { message: 'A code is on the way.', ...this.devCode(code) };
-  }
-
-  @Post('email/verify')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(204)
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
-  async verifyEmail(@CurrentUser() user: RequestUser, @Body(new ZodValidationPipe(verifyEmailSchema)) body: { code: string }) {
-    await this.auth.verifyEmail(user.id, body.code);
-  }
-
-  /** In development there is no real mailer, so the code comes back in the response. */
-  private devCode(code: string | null) {
-    return this.config.get<string>('NODE_ENV') === 'development' && code ? { devCode: code } : {};
+    await this.auth.resetPassword(body.token, body.password, request.ip);
   }
 
   private present(

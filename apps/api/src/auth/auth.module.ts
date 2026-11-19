@@ -6,7 +6,6 @@ import { JWT_AUDIENCE, JWT_ISSUER } from '../common/types';
 import { MailModule } from '../mail/mail.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { EmailCodeService } from './email-code.service';
 import { MfaService } from './mfa.service';
 import { OauthService } from './oauth.service';
 import { TokenService } from './token.service';
@@ -31,7 +30,7 @@ import { TokenService } from './token.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, TokenService, MfaService, OauthService, EmailCodeService, JwtAuthGuard],
+  providers: [AuthService, TokenService, MfaService, OauthService, JwtAuthGuard],
   exports: [JwtAuthGuard, JwtModule],
 })
 export class AuthModule {}
