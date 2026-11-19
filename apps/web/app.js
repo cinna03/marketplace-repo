@@ -251,6 +251,7 @@ async function render() {
   if (route === '#checkout') return renderCheckout();
   if (route.startsWith('#receipt/')) return renderReceipt(decodeURIComponent(route.slice('#receipt/'.length)));
   if (route === '#saved') return renderSaved();
+  if (route === '#try-own') return renderTryOwn();
   if (route === '#account') return renderAccount();
   if (route === '#enter') return renderAuth();
   if (route === '#forgot') return renderForgot();
@@ -733,6 +734,24 @@ async function renderReceipt(number) {
   } catch (error) {
     place(formError(error), false);
   }
+}
+
+function renderTryOwn() {
+  setPage('visit', 'Try your own piece');
+  const page = new window.Cinnarios.TryOwnPage({
+    onPhone: Boolean(window.CINNARIOS_PHONE),
+    // The photo goes only to the phone app's own server, which hands it to the camera.
+    openCamera: async (print, photo) => {
+      const response = await fetch(`${location.origin}/own-print`, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: photo });
+      if (!response.ok) throw new Error('The camera could not take the photo. Try again.');
+      const { id } = await response.json();
+      const href = print.link(id, location.origin);
+      const call = window.Unity && window.Unity.call;
+      if (typeof call === 'function') call(href);
+      else window.location.href = href;
+    },
+  }, { esc });
+  place(page.html(), false, () => page.bind());
 }
 
 async function renderSaved() {
