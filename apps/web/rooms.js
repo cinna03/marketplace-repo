@@ -12,6 +12,30 @@ const colourGuide = {
   11417: 'blue',
   10065: 'red',
 };
+// Shop filing for comparison. Subject comes from the title. Mood follows the colour guide.
+// Neither is a measurement of the paint or a story about what the picture means.
+const subjectGuide = {
+  437394: 'figure',
+  436528: 'flowers',
+  12127: 'figure',
+  10065: 'figure',
+  436532: 'figure',
+  436524: 'flowers',
+  435809: 'landscape',
+  436575: 'landscape',
+  11417: 'figure',
+  436535: 'landscape',
+  437881: 'figure',
+};
+const moodGuide = {
+  gold: 'bright',
+  blue: 'cool',
+  green: 'fresh',
+  red: 'warm',
+  earth: 'grounded',
+  pale: 'quiet',
+  dark: 'deep',
+};
 const swatches = [
   ['gold', '#c4a15a'],
   ['blue', '#3d5c78'],
@@ -41,6 +65,9 @@ function blankRooms() {
     advisory: [],
     payout: null,
     filters: { medium: '', min: '', max: '', colour: '', minW: '', minH: '', orientation: '' },
+    concerns: {},
+    feedback: {},
+    tries: [],
   };
 }
 
@@ -61,7 +88,17 @@ function shop() {
 }
 
 function colourOf(work) {
-  return colourGuide[work.sourceId] || 'earth';
+  const filed = window.SHOP_GUIDES && window.SHOP_GUIDES.colour && window.SHOP_GUIDES.colour[work.sourceId];
+  return filed || colourGuide[work.sourceId] || 'earth';
+}
+
+function subjectOf(work) {
+  const filed = window.SHOP_GUIDES && window.SHOP_GUIDES.subject && window.SHOP_GUIDES.subject[work.sourceId];
+  return filed || subjectGuide[work.sourceId] || 'picture';
+}
+
+function moodOf(work) {
+  return moodGuide[colourOf(work)] || 'quiet';
 }
 
 function orientationOf(work) {
@@ -159,12 +196,226 @@ function card(work) {
   const state = rooms();
   const mark = state.reserved[work.sourceId] ? '<span class="badge">Reserved in this browser</span>' : '';
   return `<a class="work" href="#work/${esc(work.sourceId)}">
-    <span class="frame"><img src="${esc(work.thumbnailUrl)}" alt="" /></span>
+    <span class="frame"><img src="${esc(work.thumbnailUrl)}" alt="" loading="lazy" decoding="async" /></span>
     ${mark}
     <strong>${esc(work.title)}</strong>
     <span>${esc(work.artist || 'Unknown artist')}</span>
     <span class="measures">${esc(work.widthCm)} × ${esc(work.heightCm)} cm</span>
   </a>`;
+}
+
+function areaOf(work) {
+  return Number(work.widthCm) * Number(work.heightCm);
+}
+
+function answerFromRecord(work, text, catalog) {
+  const { money } = shop();
+  const asked = String(text || '').toLowerCase();
+  let concern = '';
+  if (/size|big|small|large|centimet|cm\b|tall|wide|scale|dimension/.test(asked)) concern = 'size';
+  else if (/light|lamp|dark|bright|sun|shadow/.test(asked)) concern = 'light';
+  else if (/colou?r|tone|palette/.test(asked)) concern = 'colour';
+  else if (/fit|wall|room|space|suit|hang/.test(asked)) concern = 'fit';
+  else if (/mean|story|about|who|artist|credit|history|represent|made of|medium/.test(asked)) concern = 'meaning';
+  else if (/price|cost|franc|dollar|rwf|cheap|expensive/.test(asked)) concern = 'price';
+  let preference = '';
+  if (/too big|too large|smaller|won't fit|will not fit/.test(asked)) preference = 'smaller';
+  else if (/too small|larger|bigger/.test(asked)) preference = 'larger';
+  const area = (areaOf(work) / 10000).toFixed(2);
+  const replies = {
+    size: `The museum record is ${work.widthCm} cm wide, ${work.heightCm} cm high, and ${work.depthCm} cm deep, about ${area} square metres. The wall preview uses those centimetres.`,
+    light: 'The museum record does not say how this paint reads under a lamp. The wall preview is where you judge that in the room.',
+    colour: `The shop files a colour guide of “${colourOf(work)}”, a mood guide of “${moodOf(work)}”, and a subject guide of “${subjectOf(work)}”. Those guides sort the next pictures. They are not a measurement of the paint.`,
+    fit: `A clear wall needs at least ${work.widthCm} by ${work.heightCm} cm. The preview is upright, at those centimetres, and walking does not move it after you place it.`,
+    meaning: `${work.artist || 'The artist'}${work.date ? `, ${work.date}` : ''}. ${work.mediumDescription}. ${work.creditLine} That is the account this shop can give. It does not add a story the museum record does not contain.`,
+    price: `${money(work.priceAmount, work.currency)} is the reproduction at this size. Framing, a crate, and shipping are not included.`,
+  };
+  return {
+    concern,
+    preference,
+    reply: replies[concern] || 'Ask about the size, the light, the colour guide, whether it fits a wall, what the museum says it is, or the price.',
+    next: rankAfter(catalog, work, concern || 'fit', preference),
+  };
+}
+
+function rankAfter(catalog, work, concern, preference) {
+  const rest = catalog.filter((item) => item.sourceId !== work.sourceId);
+  const score = (item) => {
+    let value = 0;
+    if (item.artist && item.artist === work.artist) value += 3;
+    if (orientationOf(item) === orientationOf(work)) value += 2;
+    if (subjectOf(item) === subjectOf(work)) value += concern === 'meaning' || concern === 'fit' ? 4 : 2;
+    if (moodOf(item) === moodOf(work)) value += concern === 'colour' ? 4 : 2;
+    if (concern === 'colour' && colourOf(item) === colourOf(work)) value += 4;
+    const difference = areaOf(item) - areaOf(work);
+    if (concern === 'size' || concern === 'fit') {
+      if (preference === 'smaller' && difference < 0) value += 6;
+      else if (preference === 'larger' && difference > 0) value += 6;
+      else if (!preference || preference === 'kept') value += 3 / (1 + Math.abs(difference) / Math.max(areaOf(work), 1));
+    }
+    if (concern === 'price') {
+      const gap = Math.abs(Number(item.priceAmount) - Number(work.priceAmount));
+      if (gap <= 20000) value += 4;
+    }
+    if (concern === 'meaning' && item.artist === work.artist) value += 2;
+    return value;
+  };
+  return rest.sort((left, right) => score(right) - score(left)).slice(0, 3);
+}
+
+function guideBox() {
+  return `<section class="block" id="guide">
+    <h2>Ask from this record</h2>
+    <p>The reply uses the museum size, credit, medium, and price, plus the shop’s colour, mood, and subject guides. It will not invent a story about the picture.</p>
+    <section class="block" id="decision" hidden>
+      <h2>Does this still feel uncertain?</h2>
+      <p id="decision-line"></p>
+      <div class="actions">
+        <button type="button" id="still-uncertain">It still feels uncertain</button>
+        <button type="button" id="can-stay">This one can stay</button>
+      </div>
+    </section>
+    <form id="ask-form">
+      <label for="ask">Your question</label>
+      <input id="ask" name="ask" required placeholder="Will this fit, or what does it cost?" />
+      <button type="submit">Ask</button>
+    </form>
+    <div class="actions">
+      <button type="button" data-pref="kept">This size can stay</button>
+      <button type="button" data-pref="smaller">Too large for the wall</button>
+      <button type="button" data-pref="larger">Too small for the wall</button>
+    </div>
+    <p id="ask-reply"></p>
+    <div id="ask-next" class="suggest"></div>
+  </section>`;
+}
+
+function showWallOutcome(work, outcome, image) {
+  const box = document.querySelector('#decision');
+  const line = document.querySelector('#decision-line');
+  if (!box || !line) return;
+  box.hidden = false;
+  line.replaceChildren();
+  if (image && /^[\w.-]+$/.test(image)) {
+    const picture = document.createElement('img');
+    picture.src = `${location.origin}/wall-tries/${image}`;
+    picture.alt = 'The view saved from the wall';
+    line.append(picture);
+  }
+  const summary = outcome === 'satisfied'
+    ? `${work.title} was the one. The session ended there, and the saved view stays with this try.`
+    : outcome === 'declined'
+      ? `${work.title} was not wanted. The session ended there.`
+      : `${work.title} was still under review. The paintings swapped into that spot are kept with this try.`;
+  line.append(summary);
+  document.querySelector('#still-uncertain')?.setAttribute('hidden', '');
+  document.querySelector('#can-stay')?.setAttribute('hidden', '');
+}
+
+function showDecision(work) {
+  const box = document.querySelector('#decision');
+  const line = document.querySelector('#decision-line');
+  if (!box || !line) return;
+  box.hidden = false;
+  line.textContent = `${work.title} was on your wall at ${work.widthCm} × ${work.heightCm} cm. The tries from this visit are kept on the account.`;
+}
+
+async function answerDecision(work, choice, hrefFor) {
+  const catalog = await shop().api('/catalog/artworks');
+  const preference = choice === 'kept' ? 'kept' : (rooms().feedback[work.sourceId] || '');
+  const concern = choice === 'kept' ? 'size' : (rooms().concerns[work.sourceId] || 'fit');
+  const result = answerFromRecord(work, concern, catalog);
+  result.preference = preference || result.preference;
+  result.concern = concern;
+  result.next = rankAfter(catalog, work, concern, result.preference);
+  result.reply = choice === 'kept'
+    ? `${work.title} can stay at ${work.widthCm} × ${work.heightCm} cm. The next pictures are close to that size and share its shop guides.`
+    : `${work.title} still feels uncertain. These three are the next to try in the same spot. Each one keeps its own centimetres.`;
+  showGuideResult(work, result, hrefFor);
+  sessionStorage.removeItem('marketplace.askDecision');
+}
+
+async function noteWallTry(report) {
+  const current = String(report?.current || '');
+  const tried = [...new Set([...(report?.tried || []), current].filter(Boolean))];
+  const state = rooms();
+  const known = new Set((state.tries || []).map((item) => item.sourceId));
+  const now = new Date().toISOString();
+  state.tries = state.tries || [];
+  const fresh = [];
+  for (const sourceId of tried) {
+    if (known.has(sourceId)) continue;
+    state.tries.push({ sourceId, at: now });
+    fresh.push(sourceId);
+  }
+  keep(state);
+  const outcome = report?.outcome || '';
+  if (!outcome && current) sessionStorage.setItem('marketplace.askDecision', current);
+  if (outcome) sessionStorage.removeItem('marketplace.askDecision');
+  const send = shop()?.api;
+  for (const sourceId of fresh) {
+    if (!send) break;
+    send('/me/journey', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'viewed_in_room', sourceId, sessionId: shop().sessionId() }),
+    }).catch(() => {});
+  }
+  try {
+    const catalog = await shop().api('/catalog/artworks');
+    const work = catalog.find((item) => item.sourceId === current);
+    if (!work) return;
+    if (outcome) showWallOutcome(work, outcome, report?.image || '');
+    else showDecision(work);
+  } catch {
+    /* The question appears the next time this painting is open. */
+  }
+}
+
+function rememberGuide(work, concern, preference) {
+  const state = rooms();
+  if (concern) state.concerns[work.sourceId] = concern;
+  if (preference) state.feedback[work.sourceId] = preference;
+  keep(state);
+}
+
+function showGuideResult(work, result, hrefFor) {
+  const { esc } = shop();
+  document.querySelector('#ask-reply').textContent = result.reply;
+  document.querySelector('#ask-next').innerHTML = result.next.map((item) => `<a class="work" href="${esc(hrefFor(item.sourceId))}">
+    <span class="frame"><img src="${esc(item.thumbnailUrl)}" alt="" /></span>
+    <strong>${esc(item.title)}</strong>
+    <span>${esc(item.artist || 'Unknown artist')}</span>
+    <span class="measures">${esc(item.widthCm)} × ${esc(item.heightCm)} cm</span>
+  </a>`).join('');
+  rememberGuide(work, result.concern, result.preference);
+}
+
+async function bindGuide(work) {
+  const form = document.querySelector('#ask-form');
+  if (!form) return;
+  const hrefFor = (sourceId) => (location.hash.startsWith('#try/') ? `#try/${sourceId}` : `#work/${sourceId}`);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const catalog = await shop().api('/catalog/artworks');
+    const result = answerFromRecord(work, new FormData(form).get('ask'), catalog);
+    showGuideResult(work, result, hrefFor);
+    if (result.concern === 'size') shop().api?.('/me/journey', { method: 'POST', body: JSON.stringify({ kind: 'dimensions_checked', sourceId: work.sourceId, sessionId: shop().sessionId() }) }).catch(() => {});
+  });
+  document.querySelector('#still-uncertain')?.addEventListener('click', () => answerDecision(work, 'uncertain', hrefFor));
+  document.querySelector('#can-stay')?.addEventListener('click', () => answerDecision(work, 'kept', hrefFor));
+  const pending = sessionStorage.getItem('marketplace.askDecision');
+  if (pending === work.sourceId) showDecision(work);
+  document.querySelector('#guide').addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-pref]');
+    if (!button) return;
+    const catalog = await shop().api('/catalog/artworks');
+    const preference = button.dataset.pref;
+    const spoken = preference === 'smaller' ? 'too large' : preference === 'larger' ? 'too small' : 'size';
+    const result = answerFromRecord(work, spoken, catalog);
+    result.preference = preference === 'kept' ? 'kept' : result.preference;
+    if (preference === 'kept') result.reply = `The record stays ${work.widthCm} × ${work.heightCm} cm. The next pictures are close to that size.`;
+    showGuideResult(work, result, hrefFor);
+  });
 }
 
 window.Rooms = {
@@ -183,20 +434,7 @@ window.Rooms = {
       <div class="actions">
         <button type="button" id="zoom-in" class="quiet">Closer</button>
         <button type="button" id="zoom-out" class="quiet">Farther</button>
-      </div>
-      <label for="frame">Frame</label>
-      <select id="frame">
-        <option value="none" ${framing === 'none' ? 'selected' : ''}>No frame, ${esc(money(0))}</option>
-        <option value="wood" ${framing === 'wood' ? 'selected' : ''}>Simple wood, guide ${esc(money(frames.wood))}</option>
-        <option value="linen" ${framing === 'linen' ? 'selected' : ''}>Linen liner, guide ${esc(money(frames.linen))}</option>
-      </select>
-      <p class="note" id="frame-note">The frame figure is a guide. It is not added to the recorded price.</p>
-      <label for="ship-guide">Shipping guide</label>
-      <select id="ship-guide">
-        <option value="kigali">Kigali rider, guide ${esc(money(shipTiers.kigali.cents))}</option>
-        <option value="province">Another province, guide ${esc(money(shipTiers.province.cents))}</option>
-      </select>
-      <p class="note">Shipping is not part of this order. The figure is there so the size of the decision is visible.</p>`;
+      </div>`;
   },
   bindWork(work) {
     const image = document.querySelector('#zoom-image');
@@ -238,6 +476,7 @@ window.Rooms = {
       keep(state);
       location.reload();
     });
+    bindGuide(work);
   },
   bindTry(work, cameraHref) {
     const payload = {
@@ -250,6 +489,12 @@ window.Rooms = {
     };
     const node = document.querySelector('#ar-payload');
     if (node) node.textContent = JSON.stringify(payload, null, 2);
+    document.querySelector('#open-camera')?.addEventListener('click', (event) => {
+      const call = window.Unity && window.Unity.call;
+      if (typeof call !== 'function') return;
+      event.preventDefault();
+      call(cameraHref);
+    });
     document.querySelector('#share-try')?.addEventListener('click', async () => {
       const url = location.href;
       try {
@@ -274,7 +519,13 @@ window.Rooms = {
         document.querySelector('#try-error').textContent = error.message;
       }
     });
+    bindGuide(work);
   },
+  guideBox,
+  noteWallTry,
+  colourName: colourOf,
+  moodName: moodOf,
+  subjectName: subjectOf,
 };
 
 async function renderDiscover() {
@@ -409,7 +660,7 @@ async function renderCollections() {
   const works = await api('/catalog/artworks');
   const state = rooms();
   place(`<h1>Collections</h1>
-    <div class="stack">${collectionsFrom(works).map((group) => `<a class="line-link" href="#collection/${encodeURIComponent(group.id)}"><strong>${esc(group.title)}</strong><span>${group.works.length} works${state.follows.includes(group.id) ? ' · Following' : ''}</span></a>`).join('')}</div>`);
+    <div class="stack">${collectionsFrom(works).map((group) => `<a class="line-link" href="#collection/${encodeURIComponent(group.id)}"><strong>${esc(group.title)}</strong><span>${group.works.length} works</span></a>`).join('')}</div>`);
 }
 
 async function renderCollection(id) {
@@ -422,33 +673,9 @@ async function renderCollection(id) {
     return;
   }
   setPage('visit', group.title);
-  const following = rooms().follows.includes(group.id);
   place(`<h1>${esc(group.title)}</h1>
     <p>${esc(group.text)}</p>
-    <div class="actions">
-      <button type="button" id="follow">${following ? 'Following' : 'Follow collection'}</button>
-      <button type="button" id="share-collection" class="quiet">Share</button>
-    </div>
-    <p id="share-note" class="note"></p>
-    <div class="grid">${group.works.map(card).join('')}</div>`, false, () => {
-    document.querySelector('#follow').addEventListener('click', () => {
-      const state = rooms();
-      state.follows = state.follows.includes(group.id)
-        ? state.follows.filter((item) => item !== group.id)
-        : [...state.follows, group.id];
-      keep(state);
-      document.querySelector('#follow').textContent = state.follows.includes(group.id) ? 'Following' : 'Follow collection';
-    });
-    document.querySelector('#share-collection').addEventListener('click', async () => {
-      const url = location.href;
-      try {
-        await navigator.clipboard.writeText(url);
-        document.querySelector('#share-note').textContent = 'The collection link is on the clipboard.';
-      } catch {
-        document.querySelector('#share-note').textContent = url;
-      }
-    });
-  });
+    <div class="grid">${group.works.map(card).join('')}</div>`);
 }
 
 async function renderArtist(name) {
@@ -456,30 +683,10 @@ async function renderArtist(name) {
   const artist = decodeURIComponent(name);
   const works = await api('/catalog/artworks');
   const own = works.filter((work) => work.artist === artist);
-  const state = rooms();
-  const drafts = state.inventory.filter((item) => item.artist === artist);
   setPage('visit', artist);
-  const reserved = new Set(Object.keys(state.reserved));
   place(`<h1>${esc(artist)}</h1>
-    <p>${own.length} museum ${own.length === 1 ? 'work' : 'works'} in this catalogue. The biography and a follower count are not in the museum record, so this page does not invent them.</p>
-    <div class="pills">
-      <button type="button" class="quiet" data-show="available" aria-pressed="true">Available</button>
-      <button type="button" class="quiet" data-show="reserved" aria-pressed="false">Reserved here</button>
-    </div>
-    <div class="grid" id="artist-grid">${own.filter((work) => !reserved.has(work.sourceId)).map(card).join('') || '<p>None in this view.</p>'}</div>
-    ${drafts.length ? `<section class="block"><h2>On this device</h2><div class="stack">${drafts.map((item) => `<p><strong>${esc(item.title)}</strong> · ${esc(item.status)}</p>`).join('')}</div></section>` : ''}`, false, () => {
-    const grid = document.querySelector('#artist-grid');
-    document.querySelectorAll('[data-show]').forEach((button) => {
-      button.addEventListener('click', () => {
-        document.querySelectorAll('[data-show]').forEach((other) => other.setAttribute('aria-pressed', 'false'));
-        button.setAttribute('aria-pressed', 'true');
-        const list = button.dataset.show === 'reserved'
-          ? own.filter((work) => reserved.has(work.sourceId))
-          : own.filter((work) => !reserved.has(work.sourceId));
-        grid.innerHTML = list.map(card).join('') || '<p>None in this view.</p>';
-      });
-    });
-  });
+    <p>${own.length} museum ${own.length === 1 ? 'work' : 'works'} in this catalogue.</p>
+    <div class="grid">${own.map(card).join('') || '<p>None in this catalogue.</p>'}</div>`);
 }
 
 async function renderSaved() {
@@ -488,33 +695,8 @@ async function renderSaved() {
   const state = rooms();
   const works = await api('/catalog/artworks');
   const saved = works.filter((work) => state.saved.includes(work.sourceId));
-  const followed = collectionsFrom(works).filter((group) => state.follows.includes(group.id));
   place(`<h1>Saved</h1>
-    <section class="block">
-      <h2>Works</h2>
-      ${saved.length ? `<div class="grid">${saved.map(card).join('')}</div>` : '<p>Nothing saved yet. Open a work and choose Save.</p>'}
-    </section>
-    <section class="block">
-      <h2>Moodboards</h2>
-      <form id="board-form"><label for="board-name">New board</label><input id="board-name" name="name" required placeholder="Studio wall" /><button type="submit">Create board</button></form>
-      <div class="stack">${state.boards.map((board) => `<a class="line-link" href="#moodboard/${esc(board.id)}"><strong>${esc(board.name)}</strong><span>${board.sourceIds.length} works</span></a>`).join('') || '<p>No boards yet.</p>'}</div>
-    </section>
-    <section class="block">
-      <h2>Offers</h2>
-      <p><a href="#offers">Open the inbox</a></p>
-    </section>
-    <section class="block">
-      <h2>Collections you follow</h2>
-      ${followed.length ? `<div class="stack">${followed.map((group) => `<a class="line-link" href="#collection/${encodeURIComponent(group.id)}"><strong>${esc(group.title)}</strong></a>`).join('')}</div>` : '<p>Follow a collection from its page.</p>'}
-    </section>`, false, () => {
-    document.querySelector('#board-form').addEventListener('submit', (event) => {
-      event.preventDefault();
-      const next = rooms();
-      next.boards.push({ id: crypto.randomUUID?.() || String(Date.now()), name: new FormData(event.currentTarget).get('name'), sourceIds: [] });
-      keep(next);
-      renderSaved();
-    });
-  });
+    ${saved.length ? `<div class="grid">${saved.map(card).join('')}</div>` : '<p>Nothing saved yet. Open a work and choose Save.</p>'}`);
 }
 
 async function renderBoard(id) {
@@ -644,36 +826,7 @@ function renderThread(id) {
 }
 
 function renderStudio() {
-  const { esc, place, setPage, signedIn } = shop();
-  setPage('sheet', 'Studio');
-  const state = rooms();
-  const artist = state.role === 'artist';
-  place(`<h1>${artist ? 'Artist studio' : 'Your studio'}</h1>
-    <div class="segment" role="group" aria-label="Role">
-      <button type="button" data-role="collector" aria-pressed="${!artist}">Collector</button>
-      <button type="button" data-role="artist" aria-pressed="${artist}">Artist studio</button>
-    </div>
-    ${signedIn() ? '' : '<p><a href="#enter">Sign in</a> to keep the cart, orders, and account with you. Boards and drafts already stay on this device.</p>'}
-    ${artist ? `<div class="stack">
-      <a class="line-link" href="#inventory"><strong>Inventory</strong><span>Draft, published, and sold on this device</span></a>
-      <a class="line-link" href="#upload"><strong>Upload a work</strong><span>Size, medium, price, and a wall preview</span></a>
-      <a class="line-link" href="#ledger"><strong>Ledger</strong><span>Simulated fee and payout</span></a>
-    </div>` : `<div class="stack">
-      <a class="line-link" href="#account"><strong>Account</strong><span>Name, sign-in, and paintings opened</span></a>
-      <a class="line-link" href="#orders"><strong>Orders</strong><span>Unpaid orders from this shop</span></a>
-      <a class="line-link" href="#settings"><strong>Settings</strong><span>Addresses, methods, notices</span></a>
-      <a class="line-link" href="#advisory"><strong>Art advisory</strong><span>Describe a wall and attach a photo</span></a>
-      <a class="line-link" href="#saved"><strong>Saved</strong><span>Works, boards, and offers</span></a>
-    </div>`}`, false, () => {
-    document.querySelectorAll('[data-role]').forEach((button) => {
-      button.addEventListener('click', () => {
-        const next = rooms();
-        next.role = button.dataset.role;
-        keep(next);
-        renderStudio();
-      });
-    });
-  });
+  location.replace('#account');
 }
 
 function renderInventory() {
@@ -1168,48 +1321,26 @@ window.renderRoom = (route) => {
     renderSaved();
     return true;
   }
-  if (route.startsWith('#moodboard/')) {
-    renderBoard(route.slice('#moodboard/'.length));
-    return true;
-  }
-  if (route.startsWith('#offer/')) {
-    renderOffer(route.slice('#offer/'.length).split('/')[0]);
-    return true;
-  }
-  if (route === '#offers') {
-    renderOffers();
-    return true;
-  }
-  if (route.startsWith('#thread/')) {
-    renderThread(route.slice('#thread/'.length));
+  if (
+    route.startsWith('#moodboard/') ||
+    route.startsWith('#offer/') ||
+    route === '#offers' ||
+    route.startsWith('#thread/') ||
+    route === '#inventory' ||
+    route === '#upload' ||
+    route === '#ledger' ||
+    route === '#settings' ||
+    route === '#advisory'
+  ) {
+    location.replace('#gallery');
     return true;
   }
   if (route === '#studio') {
     renderStudio();
     return true;
   }
-  if (route === '#inventory') {
-    renderInventory();
-    return true;
-  }
-  if (route === '#upload') {
-    renderUpload();
-    return true;
-  }
-  if (route === '#ledger') {
-    renderLedger();
-    return true;
-  }
   if (route === '#orders') {
     renderOrders();
-    return true;
-  }
-  if (route === '#settings') {
-    renderSettings();
-    return true;
-  }
-  if (route === '#advisory') {
-    renderAdvisory();
     return true;
   }
   if (route === '#checkout') {
