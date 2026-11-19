@@ -13,6 +13,12 @@ export const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional().default(''),
   APPLE_CLIENT_ID: z.string().optional().default(''),
   APP_WEB_URL: z.string().url().default('http://localhost:3000'),
+  WEB_ROOT: z.string().optional().default(''),
+  SMTP_HOST: z.string().optional().default(''),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().optional().default(''),
+  SMTP_PASS: z.string().optional().default(''),
+  SMTP_FROM: z.string().optional().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;

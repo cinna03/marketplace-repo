@@ -102,9 +102,9 @@ node apps/web/server.mjs
 
 Open **http://localhost:3000**. The first time, press Cmd+Shift+R (Ctrl+Shift+R on Windows) so the browser loads the newest pages.
 
-### Placeholder code
+### Email
 
-This version sends no email. The *Confirm your email* and *Reset password* screens accept the demo code **482 916**, which is shown under the code boxes, as in the design mockups.
+Confirmation and password reset send a 6-digit code to the account email. Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` and `SMTP_FROM` in `apps/api/.env`. Signing out keeps the account. Only **Delete account** removes it.
 
 ### Trying it on a phone
 

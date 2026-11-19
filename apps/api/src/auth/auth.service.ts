@@ -1,9 +1,10 @@
+import { randomInt } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { OauthProvider, Prisma, UserStatus } from '@prisma/client';
 import { ApiError, isUniqueViolation } from '../common/errors';
-import { PasswordService, randomToken, sha256 } from '../common/crypto/password.service';
+import { PasswordService, sha256 } from '../common/crypto/password.service';
 import { Mailer } from '../mail/mailer';
 import { PrismaService } from '../prisma/prisma.service';
 import { MfaService } from './mfa.service';
@@ -78,7 +79,9 @@ export class AuthService {
         });
         return created;
       });
-      return this.finishSignIn(user);
+      const session = await this.finishSignIn(user);
+      await this.sendVerifyCode(user.id, user.email).catch(() => undefined);
+      return session;
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ApiError(409, 'EMAIL_IN_USE', 'An account with this email already exists.');
@@ -147,30 +150,32 @@ export class AuthService {
     return { ...session, user: this.publicUser(user) };
   }
 
-  async forgotPassword(email: string): Promise<string | null> {
+  async sendVerifyCode(userId: string, email: string): Promise<void> {
+    await this.issueCode(userId, email, 'verify', 'Your Cinnarios code', (code) =>
+      `Your Cinnarios confirmation code is ${code}. It expires in 15 minutes. If you did not create an account, ignore this email.`,
+    );
+  }
+
+  async confirmEmail(userId: string, code: string): Promise<void> {
+    await this.consumeCode(userId, 'verify', code);
+    await this.prisma.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() } });
+  }
+
+  async forgotPassword(email: string): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user || user.status !== UserStatus.active) return null;
+    if (!user || user.status !== UserStatus.active) return;
+    await this.issueCode(user.id, user.email, 'reset', 'Reset your Cinnarios password', (code) =>
+      `Your Cinnarios password reset code is ${code}. It expires in 15 minutes. If you did not ask for this, ignore this email.`,
+    );
+  }
 
-    const raw = randomToken();
-    const tokenHash = sha256(raw);
-    await this.prisma.$transaction(async (tx) => {
-      await tx.passwordResetToken.updateMany({
-        where: { userId: user.id, usedAt: null },
-        data: { usedAt: new Date() },
-      });
-      await tx.passwordResetToken.create({
-        data: {
-          userId: user.id,
-          tokenHash,
-          expiresAt: new Date(Date.now() + 30 * 60 * 1000),
-        },
-      });
-    });
-
-    const url = new URL('/reset-password', this.config.getOrThrow<string>('APP_WEB_URL'));
-    url.searchParams.set('token', raw);
-    await this.mailer.sendPasswordReset(user.email, url.toString());
-    return url.toString();
+  async checkResetCode(email: string, code: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user || user.status !== UserStatus.active) {
+      throw new ApiError(400, 'RESET_CODE_INVALID', 'That code is not valid.');
+    }
+    const row = await this.findLiveCode(user.id, 'reset', code);
+    if (!row) throw new ApiError(400, 'RESET_CODE_INVALID', 'That code is not valid.');
   }
 
   async changePassword(userId: string, currentPassword: string, password: string, ip?: string): Promise<void> {
@@ -201,37 +206,69 @@ export class AuthService {
     });
   }
 
-  async resetPassword(token: string, password: string, ip?: string): Promise<void> {
-    const tokenHash = sha256(token);
-    const reset = await this.prisma.passwordResetToken.findUnique({ where: { tokenHash } });
-    if (!reset || reset.usedAt || reset.expiresAt.getTime() <= Date.now()) {
-      throw new ApiError(400, 'RESET_TOKEN_INVALID', 'This reset link is invalid or has expired.');
+  async resetPassword(email: string, code: string, password: string, ip?: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user || user.status !== UserStatus.active) {
+      throw new ApiError(400, 'RESET_CODE_INVALID', 'That code is not valid.');
     }
+    const reset = await this.findLiveCode(user.id, 'reset', code);
+    if (!reset) throw new ApiError(400, 'RESET_CODE_INVALID', 'That code is not valid.');
 
     const passwordHash = await this.passwords.hash(password);
     await this.prisma.$transaction(async (tx) => {
-      const claimed = await tx.passwordResetToken.updateMany({
+      const claimed = await tx.emailCode.updateMany({
         where: { id: reset.id, usedAt: null },
         data: { usedAt: new Date() },
       });
-      if (claimed.count !== 1) {
-        throw new ApiError(400, 'RESET_TOKEN_INVALID', 'This reset link is invalid or has expired.');
-      }
+      if (claimed.count !== 1) throw new ApiError(400, 'RESET_CODE_INVALID', 'That code is not valid.');
       await tx.user.update({
-        where: { id: reset.userId },
+        where: { id: user.id },
         data: { passwordHash, tokenVersion: { increment: 1 } },
       });
-      await this.tokens.revokeAllForUser(reset.userId, tx);
+      await this.tokens.revokeAllForUser(user.id, tx);
       await tx.auditLog.create({
-        data: {
-          actorId: reset.userId,
-          action: 'auth.password_reset',
-          entityType: 'user',
-          entityId: reset.userId,
-          ip,
-        },
+        data: { actorId: user.id, action: 'auth.password_reset', entityType: 'user', entityId: user.id, ip },
       });
     });
+  }
+
+  private async issueCode(userId: string, email: string, purpose: string, subject: string, body: (code: string) => string) {
+    const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+    await this.prisma.emailCode.updateMany({
+      where: { userId, purpose, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    await this.prisma.emailCode.create({
+      data: {
+        userId,
+        purpose,
+        codeHash: sha256(`${purpose}:${userId}:${code}`),
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
+    await this.mailer.send(email, subject, body(code));
+  }
+
+  private findLiveCode(userId: string, purpose: string, code: string) {
+    return this.prisma.emailCode.findFirst({
+      where: {
+        userId,
+        purpose,
+        codeHash: sha256(`${purpose}:${userId}:${code}`),
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+    });
+  }
+
+  private async consumeCode(userId: string, purpose: string, code: string) {
+    const row = await this.findLiveCode(userId, purpose, code);
+    if (!row) throw new ApiError(400, 'CODE_INVALID', 'That code is not valid.');
+    const claimed = await this.prisma.emailCode.updateMany({
+      where: { id: row.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    if (claimed.count !== 1) throw new ApiError(400, 'CODE_INVALID', 'That code is not valid.');
   }
 
   private async finishSignIn(user: AuthUser): Promise<SessionResult> {

@@ -1,5 +1,5 @@
-// Confirm your email, once, right after creating an account: the buyer types the 6-digit
-// code into the code boxes and the account is ready. The code is a placeholder for now.
+// Confirm your email once, right after creating an account with an email and password.
+// The 6-digit code is sent to that inbox. Google sign-up does not use this screen.
 (function () {
   class VerifyPage {
     /**
@@ -20,8 +20,8 @@
         <h1>Confirm your email</h1>
         <p class="auth-lede">We sent a 6-digit code to <strong>${this.esc(this.email)}</strong>. You only do this once.</p>
         <div id="verify-code"></div>
-        <p class="dev-code">${window.Cinnarios.DemoCode.note()}</p>
-        <p class="auth-foot"><a href="#account">Do this later</a></p>
+        <p class="error" id="verify-error" role="alert"></p>
+        <p class="auth-foot"><button type="button" class="text-button" id="verify-cancel">Use a different email</button></p>
       </div></section>`;
     }
 
@@ -37,7 +37,13 @@
             <a class="button auth-wide" href="#account">Go to your account</a></div>`;
         },
       }).mount();
-      await this.actions.send();
+      document.querySelector('#verify-cancel')?.addEventListener('click', () => this.actions.cancel?.());
+      try {
+        await this.actions.send();
+      } catch (err) {
+        const error = document.querySelector('#verify-error');
+        if (error) error.textContent = err.message;
+      }
     }
   }
 

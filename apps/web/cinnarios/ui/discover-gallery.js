@@ -42,13 +42,15 @@
       button.setAttribute('aria-label', `${work.title} by ${work.artist || 'an unknown artist'}`);
       const ratio = Math.min(Math.max((Number(work.widthCm) || 1) / (Number(work.heightCm) || 1), 0.62), 1.5);
       const img = document.createElement('img');
-      img.src = work.thumbnailUrl || work.imageUrl;
       img.alt = '';
+      img.decoding = 'async';
       img.draggable = false;
+      img.className = 'pending';
+      img.addEventListener('load', () => img.classList.remove('pending'), { once: true });
       button.append(img);
       button.addEventListener('click', () => this.onOpen(work));
       this.track.append(button);
-      return { button, ratio };
+      return { button, img, ratio, work, loaded: false };
     }
 
     /** Position on the loop, wrapped so the line has no end. */
@@ -60,9 +62,14 @@
 
     draw() {
       const L = this.layout;
-      this.cards.forEach(({ button, ratio }, i) => {
+      this.cards.forEach((card, i) => {
+        const { button, img, ratio, work } = card;
         const t = this.offset(i);
         const a = Math.abs(t);
+        if (!card.loaded && a < this.layout.fade + 0.5) {
+          card.loaded = true;
+          img.src = work.thumbnailUrl || work.imageUrl;
+        }
         const h = L.cardH * (1 - Math.min(a, 6) * 0.045);
         const visible = Math.max(0, Math.min(1, (L.fade - a) / 1.5));
         button.style.width = `${Math.round(h * ratio)}px`;

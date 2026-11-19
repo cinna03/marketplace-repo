@@ -65,37 +65,66 @@ export class UsersService {
   }
 
   async requestDeletion(userId: string, ip?: string) {
-    const existing = await this.prisma.privacyRequest.findFirst({
-      where: { userId, type: 'delete', status: 'pending' },
-    });
     const current = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (current?.status === 'pending_deletion' && existing) {
-      return { id: existing.id, status: existing.status };
-    }
-
-    return this.prisma.$transaction(async (tx) => {
-      const request = await tx.privacyRequest.create({
-        data: { userId, type: 'delete' },
-      });
-      await tx.user.update({
-        where: { id: userId },
-        data: { status: 'pending_deletion', tokenVersion: { increment: 1 } },
-      });
-      await tx.refreshToken.updateMany({
-        where: { userId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
+    if (!current) throw new ApiError(404, 'NOT_FOUND', 'Account not found.');
+    await this.prisma.$transaction(async (tx) => {
+      await tx.shopOrder.deleteMany({ where: { userId } });
       await tx.auditLog.create({
         data: {
-          actorId: userId,
-          action: 'privacy.deletion_requested',
+          actorId: null,
+          action: 'privacy.account_deleted',
           entityType: 'user',
           entityId: userId,
           ip,
         },
       });
-      return { id: request.id, status: request.status };
+      await tx.auditLog.updateMany({ where: { actorId: userId }, data: { actorId: null } });
+      await tx.privacyRequest.deleteMany({ where: { userId } });
+      await tx.user.delete({ where: { id: userId } });
     });
+    return { status: 'deleted' };
+  }
+
+  async library(userId: string) {
+    const [saved, tries] = await Promise.all([
+      this.prisma.savedPiece.findMany({ where: { userId }, orderBy: { position: 'asc' } }),
+      this.prisma.wallTry.findMany({ where: { userId }, orderBy: { triedAt: 'asc' } }),
+    ]);
+    return {
+      saved: saved.map((piece) => piece.sourceId),
+      tries: tries.map((item) => ({
+        sourceId: item.sourceId,
+        at: item.triedAt.toISOString(),
+        ...(item.outcome ? { outcome: item.outcome } : {}),
+        ...(item.image ? { image: item.image } : {}),
+      })),
+    };
+  }
+
+  async replaceLibrary(
+    userId: string,
+    saved: string[],
+    tries: { sourceId: string; at: string; outcome?: string; image?: string }[],
+  ) {
+    const uniqueSaved = [...new Set(saved)];
+    await this.prisma.$transaction(async (tx) => {
+      await tx.savedPiece.deleteMany({ where: { userId } });
+      if (uniqueSaved.length) {
+        await tx.savedPiece.createMany({
+          data: uniqueSaved.map((sourceId, position) => ({ userId, sourceId, position })),
+        });
+      }
+      for (const item of tries) {
+        const triedAt = new Date(item.at);
+        if (Number.isNaN(triedAt.getTime())) continue;
+        await tx.wallTry.upsert({
+          where: { userId_sourceId_triedAt: { userId, sourceId: item.sourceId, triedAt } },
+          create: { userId, sourceId: item.sourceId, triedAt, outcome: item.outcome, image: item.image },
+          update: { outcome: item.outcome, image: item.image },
+        });
+      }
+    });
+    return this.library(userId);
   }
 
   listAddresses(userId: string) {

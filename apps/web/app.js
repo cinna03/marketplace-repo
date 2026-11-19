@@ -1,4 +1,5 @@
-const API = window.CINNARIOS_PHONE
+const apiMeta = document.querySelector('meta[name="cinnarios-api"]')?.getAttribute('content') || '';
+const API = window.CINNARIOS_PHONE || apiMeta === 'same'
   ? `${location.origin}/v1`
   : `${location.protocol}//${location.hostname}:3001/v1`;
 const app = document.querySelector('#app');
@@ -273,10 +274,52 @@ document.addEventListener('click', (event) => {
   carriedWork = null;
 });
 
+let libraryReady = false;
+let libraryTimer = 0;
+
+function syncLibrary() {
+  if (!signedIn()) return;
+  clearTimeout(libraryTimer);
+  libraryTimer = setTimeout(() => {
+    api('/me/library', { method: 'PUT', body: JSON.stringify(window.Rooms.snapshot()) }).catch(() => {});
+  }, 400);
+}
+
+async function pullLibrary() {
+  const remote = await api('/me/library');
+  const local = window.Rooms.snapshot();
+  const saved = [...new Set([...(remote.saved || []), ...local.saved])];
+  const tries = [...(remote.tries || [])];
+  const seen = new Set(tries.map((item) => `${item.sourceId}|${item.at}`));
+  for (const item of local.tries) {
+    if (!seen.has(`${item.sourceId}|${item.at}`)) tries.push(item);
+  }
+  window.Rooms.replaceLibrary(saved, tries);
+  if (saved.length !== (remote.saved || []).length || tries.length !== (remote.tries || []).length) {
+    await api('/me/library', { method: 'PUT', body: JSON.stringify(window.Rooms.snapshot()) });
+  }
+}
+
+async function ensureLibrary() {
+  if (!signedIn() || libraryReady) return;
+  libraryReady = true;
+  try {
+    await pullLibrary();
+  } catch {
+    libraryReady = false;
+  }
+}
+
 async function render() {
+  await ensureLibrary();
   newVisit();
   markNav();
   const route = location.hash || '#home';
+  const openWhileUnconfirmed = route === '#verify' || route === '#enter' || route === '#join' || route === '#forgot' || route === '#reset';
+  if (signedIn() && !openWhileUnconfirmed && !(await emailConfirmed())) {
+    location.hash = '#verify';
+    return;
+  }
   showLoadingSoon();
   if (route === '#home') return renderHome();
   if (route.startsWith('#work/')) return renderWork(route.slice('#work/'.length).split('/')[0], route.split('/')[2]);
@@ -287,6 +330,7 @@ async function render() {
   if (route === '#saved') return renderSaved();
   if (route === '#try-own') return renderTryOwn();
   if (route === '#account') return renderAccount();
+  if (route === '#privacy') return renderPrivacy();
   if (route === '#enter') return renderAuth();
   if (route === '#join') return renderAuth('up');
   if (route === '#verify') return renderVerify();
@@ -303,6 +347,16 @@ function acceptSession(result) {
     throw new Error('This account still has the old two-step sign-in turned on, which this version no longer offers.');
   }
   sessionStorage.setItem(tokenKey, result.accessToken);
+  if (result.user) sessionStorage.setItem('marketplace.emailVerified', result.user.emailVerifiedAt ? 'yes' : 'no');
+}
+
+async function emailConfirmed() {
+  if (sessionStorage.getItem('marketplace.emailVerified') === 'yes') return true;
+  const me = await api('/me');
+  const yes = Boolean(me.emailVerifiedAt);
+  sessionStorage.setItem('marketplace.emailVerified', yes ? 'yes' : 'no');
+  if (me.email) sessionStorage.setItem('cinnarios.verifyEmail', me.email);
+  return yes;
 }
 
 /** Puts Google's own sign-in button into a slot, when the server has a Google client id. */
@@ -343,9 +397,11 @@ function renderAuth(start = 'in') {
   setPage('visit', start === 'up' ? 'Create account' : 'Sign in');
   const page = new window.Cinnarios.SignInPage({
     signIn: async ({ email, password }) => {
-      acceptSession(await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }));
+      const result = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+      acceptSession(result);
       await refreshCartCount();
-      location.hash = '#account';
+      sessionStorage.setItem('cinnarios.verifyEmail', email);
+      location.hash = result.user?.emailVerifiedAt ? '#account' : '#verify';
     },
     create: async ({ name, email, password }) => {
       acceptSession(await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) }));
@@ -354,7 +410,9 @@ function renderAuth(start = 'in') {
       } catch {
         /* The name can be set later from Account. */
       }
+      await refreshCartCount();
       sessionStorage.setItem('cinnarios.verifyEmail', email);
+      sessionStorage.setItem('marketplace.emailVerified', 'no');
       location.hash = '#verify';
     },
     mountGoogle,
@@ -371,11 +429,18 @@ function renderVerify() {
   }
   const email = sessionStorage.getItem('cinnarios.verifyEmail') || 'your email';
   const page = new window.Cinnarios.VerifyPage(email, {
-    // Placeholder: no email is sent in this version; the demo code confirms the address.
-    send: async () => {},
     verify: async (code) => {
-      await window.Cinnarios.DemoCode.check(code);
+      await api('/auth/email/confirm', { method: 'POST', body: JSON.stringify({ code }) });
+      sessionStorage.setItem('marketplace.emailVerified', 'yes');
       sessionStorage.removeItem('cinnarios.verifyEmail');
+    },
+    cancel: async () => {
+      sessionStorage.removeItem(tokenKey);
+      sessionStorage.removeItem('marketplace.emailVerified');
+      location.hash = '#join';
+    },
+    send: async () => {
+      await api('/auth/email/send', { method: 'POST', body: '{}' });
     },
   }, { esc });
   place(page.html(), false, () => page.bind());
@@ -383,19 +448,12 @@ function renderVerify() {
 
 function renderForgot() {
   setPage('visit', 'Reset password');
-  // Placeholder codes: the screens accept the demo code. Behind them, the API's own reset
-  // link (returned while developing) carries the real token that changes the password.
-  let token = '';
   const page = new window.Cinnarios.ResetPage({
     sendCode: async (email) => {
-      const body = await api('/auth/password/forgot', { method: 'POST', body: JSON.stringify({ email }) });
-      token = body.resetUrl ? new URL(body.resetUrl).searchParams.get('token') || '' : '';
+      await api('/auth/password/forgot', { method: 'POST', body: JSON.stringify({ email }) });
     },
-    checkCode: (email, code) => window.Cinnarios.DemoCode.check(code),
-    reset: async (email, code, password) => {
-      if (!token) throw new Error("There's no account with that email. Go back and check it.");
-      await api('/auth/password/reset', { method: 'POST', body: JSON.stringify({ token, password }) });
-    },
+    checkCode: (email, code) => api('/auth/password/code', { method: 'POST', body: JSON.stringify({ email, code }) }),
+    reset: (email, code, password) => api('/auth/password/reset', { method: 'POST', body: JSON.stringify({ email, code, password }) }),
   }, { esc });
   place(page.html(), false, () => page.bind());
 }
@@ -619,7 +677,8 @@ async function renderCheckout() {
     return;
   }
   try {
-    const [cart, addresses] = await Promise.all([api('/cart'), api('/me/addresses')]);
+    const [loaded, addresses] = await Promise.all([api('/cart'), api('/me/addresses')]);
+    const cart = loaded;
     if (!cart.items.length) {
       location.hash = '#cart';
       return;
@@ -627,11 +686,11 @@ async function renderCheckout() {
     const page = new window.Cinnarios.CheckoutPage(cart, addresses[addresses.length - 1] || null, RW_PROVINCES, {
       placeOrder: async (address, tierId) => {
         const saved = await api('/me/addresses', { method: 'POST', body: JSON.stringify(address) });
-        const order = await api('/checkout', { method: 'POST', body: JSON.stringify({ addressId: saved.id, sessionId: sessionId() }) });
-        window.Cinnarios.Delivery.rememberForOrder(order.number, tierId);
-        sessionStorage.setItem('marketplace.lastOrder', order.number);
+        const created = await api('/checkout', { method: 'POST', body: JSON.stringify({ addressId: saved.id, sessionId: sessionId() }) });
+        window.Cinnarios.Delivery.rememberForOrder(created.number, tierId);
         await refreshCartCount();
-        location.hash = `#receipt/${order.number}`;
+        sessionStorage.setItem('marketplace.lastOrder', created.number);
+        location.hash = `#receipt/${created.number}`;
       },
     }, { esc, money });
     place(page.html(), false, () => page.bind());
@@ -681,6 +740,15 @@ async function renderSaved() {
   }
 }
 
+function renderPrivacy() {
+  setPage('visit', 'Privacy');
+  place(`<section class="account-page"><h1>Privacy</h1>
+    <p>Cinnarios stores the email, password hash, name, delivery address, cart, and orders for the signed-in account. Addresses and the phone number are encrypted. The demo checkout never asks for a card number or a mobile-money PIN, and it does not charge anyone.</p>
+    <p>The paintings are public-domain works from The Metropolitan Museum of Art. Signing in on this server is a different account from a sign-in stored only on the phone.</p>
+    <p>Signing out leaves the account on the server. Delete account is the only action that removes it, including the cart, orders, saved paintings and wall tries.</p>
+    <p><a href="#account">Back to Account</a></p></section>`, false);
+}
+
 async function renderAccount() {
   carriedWork = null;
   setPage('visit', 'Account');
@@ -706,6 +774,12 @@ async function renderAccount() {
         await api(`/me/addresses/${id}`, { method: 'DELETE' });
         renderAccount();
       },
+      deleteAccount: async () => {
+        await api('/me/deletion-requests', { method: 'POST', body: '{}' });
+        sessionStorage.removeItem(tokenKey);
+        window.Rooms.clearLibrary();
+        location.hash = '#enter';
+      },
       signOut: async () => {
         try {
           await api('/auth/logout', { method: 'POST', body: '{}' });
@@ -713,6 +787,8 @@ async function renderAccount() {
           /* The local session still ends. */
         }
         sessionStorage.removeItem(tokenKey);
+        window.Rooms.clearLibrary();
+        libraryReady = false;
         cartCount.textContent = '';
         location.hash = '#enter';
       },
@@ -724,7 +800,7 @@ async function renderAccount() {
 }
 
 window.Shop = {
-  api, esc, money, rateNote, place, setPage, signedIn, formError, refreshCartCount, sessionId, openPieceInSpace,
+  api, esc, money, rateNote, place, setPage, signedIn, formError, refreshCartCount, sessionId, openPieceInSpace, syncLibrary,
 };
 
 app.addEventListener('click', (event) => {

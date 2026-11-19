@@ -62,7 +62,6 @@
         <h1>Check your email</h1>
         <p class="auth-lede">We sent a 6-digit code to <strong>${this.esc(this.email)}</strong>.</p>
         <div id="reset-code"></div>
-        <p class="dev-code">${window.Cinnarios.DemoCode.note()}</p>
         <p class="auth-foot"><button type="button" class="text-button" id="other-email">Use another email</button></p>`);
       document.querySelector('#other-email').addEventListener('click', () => this.emailStep());
       new window.Cinnarios.CodeInput(document.querySelector('#reset-code'), {

@@ -67,6 +67,7 @@ function rooms() {
 
 function keep(next) {
   localStorage.setItem(roomKey, JSON.stringify(next));
+  window.Shop?.syncLibrary?.();
 }
 
 function shop() {
@@ -403,6 +404,30 @@ window.Rooms = {
   /** Every wall try kept in this browser, oldest first: { sourceId, at, outcome?, image? }. */
   tries() {
     return (rooms().tries || []).slice();
+  },
+  snapshot() {
+    const state = rooms();
+    return {
+      saved: state.saved.slice(),
+      tries: (state.tries || []).map((item) => ({
+        sourceId: String(item.sourceId),
+        at: item.at,
+        ...(item.outcome ? { outcome: item.outcome } : {}),
+        ...(item.image && /^[\w.-]+$/.test(item.image) ? { image: item.image } : {}),
+      })),
+    };
+  },
+  replaceLibrary(saved, tries) {
+    const state = rooms();
+    state.saved = saved.slice();
+    state.tries = tries.slice();
+    localStorage.setItem(roomKey, JSON.stringify(state));
+  },
+  clearLibrary() {
+    const state = rooms();
+    state.saved = [];
+    state.tries = [];
+    localStorage.setItem(roomKey, JSON.stringify(state));
   },
   /** The paintings this browser has tried on a wall, oldest first. */
   triedIds() {

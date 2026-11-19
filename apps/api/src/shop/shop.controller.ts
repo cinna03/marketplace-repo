@@ -4,7 +4,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { RequestUser } from '../common/types';
-import { addCartItemSchema, checkoutSchema, updateCartItemSchema } from './shop.schemas';
+import { addCartItemSchema, checkoutSchema, demoPaySchema, updateCartItemSchema } from './shop.schemas';
 import { ShopService } from './shop.service';
 
 @Controller()
@@ -53,12 +53,12 @@ export class ShopController {
     return this.shop.listOrders(user.id);
   }
 
-  @Post('orders/:number/pay')
-  pay(
+  @Post('orders/:number/demo-pay')
+  demoPay(
     @CurrentUser() user: RequestUser,
     @Param('number') number: string,
-    @Body(new ZodValidationPipe(checkoutSchema.pick({ sessionId: true }))) body: { sessionId?: string },
+    @Body(new ZodValidationPipe(demoPaySchema)) body: { outcome: 'paid' | 'insufficient_funds' | 'timeout'; sessionId?: string },
   ) {
-    return this.shop.pay(user.id, number, body.sessionId);
+    return this.shop.demoPay(user.id, number, body.outcome, body.sessionId);
   }
 }

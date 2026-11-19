@@ -9,6 +9,33 @@ services:
       - "5432:5432"
     volumes:
       - marketplace_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketplace -d marketplace"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  shop:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DATABASE_URL: postgresql://marketplace:marketplace@postgres:5432/marketplace
+      WEB_ROOT: /app/apps/web
+      CORS_ORIGIN: http://localhost:8080
+      APP_WEB_URL: http://localhost:8080
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   marketplace_pg:

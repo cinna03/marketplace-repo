@@ -1,8 +1,10 @@
 import 'reflect-metadata';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { RequestMethod } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
-import { json } from 'express';
+import express, { json } from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
@@ -16,10 +18,11 @@ async function bootstrap() {
     .map((origin) => origin.trim())
     .filter(Boolean);
 
+  const webRoot = config.get<string>('WEB_ROOT') || '';
   app.setGlobalPrefix('v1', {
-    exclude: [{ path: '/', method: RequestMethod.GET }],
+    exclude: webRoot ? [] : [{ path: '/', method: RequestMethod.GET }],
   });
-  app.use(helmet());
+  app.use(helmet(webRoot ? { contentSecurityPolicy: false, crossOriginEmbedderPolicy: false } : {}));
   app.use(cookieParser());
   app.use(json({ limit: '32kb' }));
   const privateOrigin = /^https?:\/\/(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?::\d+)?$/;
@@ -42,6 +45,16 @@ async function bootstrap() {
   app.useGlobalFilters(new ApiExceptionFilter());
   if (config.get<string>('NODE_ENV') === 'production') {
     app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  }
+
+  if (webRoot) {
+    const server = app.getHttpAdapter().getInstance();
+    const page = readFileSync(join(webRoot, 'index.html'), 'utf8')
+      .replace('name="cinnarios-api" content=""', 'name="cinnarios-api" content="same"');
+    server.get(['/', '/index.html'], (_req: unknown, res: { type: (t: string) => { send: (body: string) => void } }) => {
+      res.type('html').send(page);
+    });
+    server.use(express.static(webRoot, { index: false }));
   }
 
   await app.listen(config.getOrThrow<number>('PORT'));

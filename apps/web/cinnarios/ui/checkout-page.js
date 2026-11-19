@@ -62,7 +62,7 @@
       const total = BigInt(this.cart.totalAmount) + BigInt(tier.cents);
       return `
         <h2>Your order</h2>
-        ${this.cart.items.map((item) => `<div class="summary-line"><img src="${esc(item.thumbnailUrl)}" alt="" /><span><strong>${esc(item.title)}</strong>${esc(item.widthCm)} × ${esc(item.heightCm)} cm${item.quantity > 1 ? ` · ${esc(item.quantity)} prints` : ''}</span></div>`).join('')}
+        ${this.cart.items.map((item) => `<div class="summary-line">${item.thumbnailUrl ? `<img src="${esc(item.thumbnailUrl)}" alt="" />` : ''}<span><strong>${esc(item.title)}</strong>${esc(item.widthCm)} × ${esc(item.heightCm)} cm${item.quantity > 1 ? ` · ${esc(item.quantity)} prints` : ''}</span></div>`).join('')}
         <div class="sum-row"><span>Subtotal</span><span>${esc(this.money(this.cart.totalAmount, this.cart.currency))}</span></div>
         <div class="sum-row"><span>Delivery · ${esc(tier.label)}</span><span>${esc(this.money(tier.cents, tier.currency))}</span></div>
         <div class="sum-row sum-total"><span>Total</span><span>${esc(this.money(total.toString(), this.cart.currency))}</span></div>
@@ -99,14 +99,12 @@
         }
         const button = document.querySelector('#place-order');
         button.disabled = true;
-        button.textContent = 'Placing your order…';
         const address = { ...Object.fromEntries(new FormData(form)), countryCode: 'RW', postalCode: 'N/A' };
         try {
           await this.actions.placeOrder(address, this.Delivery.forProvince(address.region).id);
         } catch (err) {
           error.textContent = err.message;
           button.disabled = false;
-          button.textContent = 'Place order';
         }
       });
     }
@@ -130,7 +128,7 @@
       <section class="order-placed">
         <div class="done-badge">${window.Cinnarios.icons.check()}</div>
         <h1>Order placed</h1>
-        <p>Order <strong>${esc(order.number)}</strong> for ${esc(this.money(total.toString(), order.currency))}, going to ${esc(place)}.</p>
+        <p>Order <strong>${esc(order.number)}</strong> for ${esc(this.money(total.toString(), order.currency))}, going to ${esc(place)}. A rider brings it to that address.</p>
         <div class="order-placed-items">${order.items.map((item) => `<p>${esc(item.title)} · ${esc(item.widthCm)} × ${esc(item.heightCm)} cm${item.quantity > 1 ? ` · ${esc(item.quantity)} prints` : ''}</p>`).join('')}</div>
         <div class="piece-actions order-placed-actions"><a class="button" href="#account">See your orders</a><a class="button quiet" href="#gallery">Keep browsing</a></div>
       </section>`;

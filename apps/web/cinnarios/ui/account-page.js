@@ -31,10 +31,12 @@
 
     html() {
       const esc = this.esc;
+      const name = this.data.displayName || this.data.email || 'Account';
+      const initial = name.trim().charAt(0).toUpperCase() || 'C';
       return `
       <section class="account-page">
         <div class="page-head">
-          <div><h1 id="account-name">${esc(this.data.displayName || 'Account')}</h1><p>Signed in as ${esc(this.data.email)}</p></div>
+          <div class="account-id"><span class="account-mark" id="account-mark">${esc(initial)}</span><div><h1 id="account-name">${esc(this.data.displayName || 'Account')}</h1><p>Signed in as ${esc(this.data.email)}</p></div></div>
           <div class="piece-actions account-actions">
             <button type="button" class="quiet" id="edit-profile">Edit profile</button>
             <button type="button" class="quiet" id="sign-out">Sign out</button>
@@ -48,6 +50,12 @@
         ${this.triesHtml()}
         ${this.savedHtml()}
         <div class="account-columns">${this.ordersHtml()}${this.addressHtml()}</div>
+        <section class="account-block">
+          <h2>Your data</h2>
+          <p class="muted">The account, addresses, saved paintings and orders stay on the server after you sign out. <a href="#privacy">Privacy</a> says what is kept. Delete account removes them.</p>
+          <button type="button" class="quiet" id="delete-account">Delete account</button>
+          <p id="delete-result" class="error" role="alert"></p>
+        </section>
       </section>`;
     }
 
@@ -84,7 +92,7 @@
       const esc = this.esc;
       const orders = this.data.orders;
       const body = orders.length
-        ? `<div class="order-list">${orders.map((order) => `<a class="order-row" href="#receipt/${esc(order.number)}"><span><strong>${esc(order.number)}</strong>${esc(order.items.map((item) => item.title).join(', '))}</span><span>${esc(this.money(order.totalAmount, order.currency))}</span></a>`).join('')}</div>`
+        ? `<div class="order-list">${orders.map((order) => `<a class="order-row" href="#receipt/${esc(order.number)}"><span><strong>${esc(order.number)}</strong>${esc(order.items.map((item) => item.title).join(', '))}</span><span>Placed · ${esc(this.money(order.totalAmount, order.currency))}</span></a>`).join('')}</div>`
         : '<p class="muted">No orders yet. When you buy a painting, its delivery shows up here.</p>';
       return this.section('Orders', body);
     }
@@ -110,12 +118,23 @@
         try {
           await this.actions.rename(name);
           document.querySelector('#account-name').textContent = name;
+          document.querySelector('#account-mark').textContent = name.charAt(0).toUpperCase();
           form.hidden = true;
         } catch (err) {
           document.querySelector('#profile-result').textContent = err.message;
         }
       });
       document.querySelector('#sign-out').addEventListener('click', () => this.actions.signOut());
+      document.querySelector('#delete-account').addEventListener('click', async () => {
+        const result = document.querySelector('#delete-result');
+        if (!window.confirm('Delete this account? The cart, orders, saved paintings and wall tries are removed from the server. Signing out does not do this.')) return;
+        try {
+          await this.actions.deleteAccount();
+          result.textContent = '';
+        } catch (err) {
+          result.textContent = err.message;
+        }
+      });
       document.querySelector('[data-remove-address]')?.addEventListener('click', async (event) => {
         await this.actions.removeAddress(event.currentTarget.dataset.removeAddress);
       });

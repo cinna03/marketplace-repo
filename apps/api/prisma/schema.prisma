@@ -70,6 +70,9 @@ model User {
   journeyEvents    JourneyEvent[]
   cart             Cart?
   orders           ShopOrder[]
+  emailCodes       EmailCode[]
+  savedPieces      SavedPiece[]
+  wallTries        WallTry[]
 
   @@map("users")
 }
@@ -187,6 +190,48 @@ model PasswordResetToken {
 
   @@index([userId])
   @@map("password_reset_tokens")
+}
+
+model EmailCode {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  purpose   String
+  codeHash  String    @map("code_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@map("email_codes")
+}
+
+model SavedPiece {
+  userId    String   @map("user_id") @db.Uuid
+  sourceId  String   @map("source_id")
+  position  Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, sourceId])
+  @@map("saved_pieces")
+}
+
+model WallTry {
+  id       String   @id @default(uuid()) @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  sourceId String   @map("source_id")
+  outcome  String?
+  image    String?
+  triedAt  DateTime @map("tried_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sourceId, triedAt])
+  @@index([userId, triedAt])
+  @@map("wall_tries")
 }
 
 model AuditLog {

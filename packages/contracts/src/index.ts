@@ -57,8 +57,34 @@ export const forgotPasswordSchema = z.object({
 });
 
 export const resetPasswordSchema = z.object({
-  token: z.string().min(20),
+  email: emailSchema,
+  code: z.string().trim().regex(/^\d{6}$/),
   password: passwordSchema,
+});
+
+export const confirmEmailSchema = z.object({
+  code: z.string().trim().regex(/^\d{6}$/),
+});
+
+export const checkResetCodeSchema = z.object({
+  email: emailSchema,
+  code: z.string().trim().regex(/^\d{6}$/),
+});
+
+const sourceIdSchema = z.string().regex(/^\d{1,12}$/);
+
+export const librarySchema = z.object({
+  saved: z.array(sourceIdSchema).max(500),
+  tries: z
+    .array(
+      z.object({
+        sourceId: sourceIdSchema,
+        at: z.string().datetime(),
+        outcome: z.enum(['satisfied', 'declined', 'uncertain']).optional(),
+        image: z.string().regex(/^[\w.-]{1,80}$/).optional(),
+      }),
+    )
+    .max(200),
 });
 
 export const changePasswordSchema = z.object({

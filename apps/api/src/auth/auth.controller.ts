@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import {
   changePasswordSchema,
+  checkResetCodeSchema,
+  confirmEmailSchema,
   forgotPasswordSchema,
   loginSchema,
   mfaChallengeSchema,
@@ -138,25 +140,47 @@ export class AuthController {
     await this.auth.changePassword(user.id, body.currentPassword, body.password, request.ip);
   }
 
+  @Post('email/send')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(202)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  async sendEmailCode(@CurrentUser() user: RequestUser) {
+    await this.auth.sendVerifyCode(user.id, user.email);
+    return { message: 'A confirmation code is on the way.' };
+  }
+
+  @Post('email/confirm')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(204)
+  async confirmEmail(
+    @CurrentUser() user: RequestUser,
+    @Body(new ZodValidationPipe(confirmEmailSchema)) body: { code: string },
+  ) {
+    await this.auth.confirmEmail(user.id, body.code);
+  }
+
   @Post('password/forgot')
   @HttpCode(202)
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   async forgot(@Body(new ZodValidationPipe(forgotPasswordSchema)) body: { email: string }) {
-    const resetUrl = await this.auth.forgotPassword(body.email);
-    const local = this.config.get<string>('NODE_ENV') === 'development';
-    return {
-      message: 'If an account exists for that email, a reset link is on the way.',
-      ...(local && resetUrl ? { resetUrl } : {}),
-    };
+    await this.auth.forgotPassword(body.email);
+    return { message: 'If an account exists for that email, a code is on the way.' };
+  }
+
+  @Post('password/code')
+  @HttpCode(204)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  async checkResetCode(@Body(new ZodValidationPipe(checkResetCodeSchema)) body: { email: string; code: string }) {
+    await this.auth.checkResetCode(body.email, body.code);
   }
 
   @Post('password/reset')
   @HttpCode(204)
   async reset(
-    @Body(new ZodValidationPipe(resetPasswordSchema)) body: { token: string; password: string },
+    @Body(new ZodValidationPipe(resetPasswordSchema)) body: { email: string; code: string; password: string },
     @Req() request: Request,
   ) {
-    await this.auth.resetPassword(body.token, body.password, request.ip);
+    await this.auth.resetPassword(body.email, body.code, body.password, request.ip);
   }
 
   private present(

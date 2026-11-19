@@ -8,10 +8,11 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { AddressInput, UpdateAddressInput, UpdateMeInput, addressSchema, updateAddressSchema, updateMeSchema } from '@marketplace/contracts';
+import { AddressInput, UpdateAddressInput, UpdateMeInput, addressSchema, librarySchema, updateAddressSchema, updateMeSchema } from '@marketplace/contracts';
 import { Request } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -41,6 +42,19 @@ export class UsersController {
   @Get('export')
   exportMe(@CurrentUser() user: RequestUser) {
     return this.users.exportAccount(user.id);
+  }
+
+  @Get('library')
+  library(@CurrentUser() user: RequestUser) {
+    return this.users.library(user.id);
+  }
+
+  @Put('library')
+  replaceLibrary(
+    @CurrentUser() user: RequestUser,
+    @Body(new ZodValidationPipe(librarySchema)) body: { saved: string[]; tries: { sourceId: string; at: string; outcome?: string; image?: string }[] },
+  ) {
+    return this.users.replaceLibrary(user.id, body.saved, body.tries);
   }
 
   @Post('deletion-requests')

@@ -78,7 +78,7 @@
     tile(work) {
       const esc = this.esc;
       return `<a class="tile" href="#work/${esc(work.sourceId)}/search">
-        <img src="${esc(work.thumbnailUrl || work.imageUrl)}" alt="" loading="lazy" decoding="async" />
+        <img class="pending" src="${esc(work.thumbnailUrl || work.imageUrl)}" alt="" loading="lazy" decoding="async" onload="this.classList.remove('pending')" />
         <strong>${esc(work.title)}</strong>
         <span>${esc(work.artist || 'Unknown artist')} · ${esc(work.widthCm)} × ${esc(work.heightCm)} cm</span>
         <span class="tile-price">${esc(this.money(work.priceAmount, work.currency))}</span>

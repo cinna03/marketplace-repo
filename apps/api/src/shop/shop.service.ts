@@ -55,6 +55,10 @@ export class ShopService {
   }
 
   async checkout(userId: string, addressId: string, sessionId?: string) {
+    const owner = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!owner?.emailVerifiedAt) {
+      throw new ApiError(403, 'EMAIL_UNCONFIRMED', 'Confirm the code sent to your email before placing an order.');
+    }
     const address = await this.prisma.address.findFirst({ where: { id: addressId, userId } });
     if (!address) throw new ApiError(404, 'NOT_FOUND', 'Address not found.');
     const current = await this.prisma.cart.findUnique({
@@ -113,12 +117,33 @@ export class ShopService {
     return orders.map((order) => this.presentOrder(order));
   }
 
+  async demoPay(userId: string, number: string, outcome: 'paid' | 'insufficient_funds' | 'timeout', sessionId?: string) {
+    const order = await this.prisma.shopOrder.findUnique({ where: { number } });
+    if (!order || order.userId !== userId) throw new ApiError(404, 'NOT_FOUND', 'Order not found.');
+    if (order.status !== 'awaiting_payment') {
+      throw new ApiError(409, 'ORDER_NOT_PAYABLE', 'This order is no longer awaiting payment.');
+    }
+    if (outcome === 'timeout') {
+      throw new ApiError(504, 'DEMO_TIMEOUT', 'The demo payment timed out. Nothing was charged. You can try again.');
+    }
+    if (outcome === 'insufficient_funds') {
+      throw new ApiError(402, 'DEMO_DECLINED', 'The demo payment was declined for insufficient funds. Nothing was charged.');
+    }
+    return this.markPaid(userId, number, sessionId);
+  }
+
   async pay(userId: string, number: string, sessionId?: string) {
     const order = await this.prisma.shopOrder.findUnique({ where: { number }, include: { items: true } });
     if (!order || order.userId !== userId) throw new ApiError(404, 'NOT_FOUND', 'Order not found.');
     if (order.status !== 'awaiting_payment') {
       throw new ApiError(409, 'ORDER_NOT_PAYABLE', 'This order is no longer awaiting payment.');
     }
+    return this.markPaid(userId, number, sessionId);
+  }
+
+  private async markPaid(userId: string, number: string, sessionId?: string) {
+    const order = await this.prisma.shopOrder.findUnique({ where: { number }, include: { items: true } });
+    if (!order || order.userId !== userId) throw new ApiError(404, 'NOT_FOUND', 'Order not found.');
     const paid = await this.prisma.shopOrder.update({
       where: { id: order.id },
       data: { status: 'paid', paidAt: new Date() },

@@ -13,7 +13,7 @@ describe('AuthService', () => {
   const tokens = { issue: jest.fn(), rotate: jest.fn(), revoke: jest.fn(), revokeAllForUser: jest.fn() };
   const mfa = { enroll: jest.fn(), confirm: jest.fn(), verify: jest.fn() };
   const passwords = { hash: jest.fn(async () => 'hash'), matches: jest.fn() };
-  const mailer = { sendPasswordReset: jest.fn() };
+  const mailer = { send: jest.fn() };
   const config = { getOrThrow: () => 300 } as unknown as ConfigService;
 
   function user(overrides: Record<string, unknown> = {}) {
@@ -63,7 +63,7 @@ describe('AuthService', () => {
   it('rejects an unknown email without sending a reset message', async () => {
     const prisma = { user: { findUnique: async () => null } };
     await service(prisma).forgotPassword('missing@example.com');
-    expect(mailer.sendPasswordReset).not.toHaveBeenCalled();
+    expect(mailer.send).not.toHaveBeenCalled();
   });
 
   it('reports a duplicate email instead of creating a second account', async () => {

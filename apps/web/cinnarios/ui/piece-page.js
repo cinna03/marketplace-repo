@@ -31,7 +31,7 @@
       <article class="piece-page">
         <a class="pill-back" href="${esc(backHref)}">${this.icons.back()}${esc(BACK_LABELS[from] || 'Back')}</a>
         <div class="piece-main">
-          <div class="piece-art"><img src="${esc(work.imageUrl)}" alt="${esc(work.title)}" style="view-transition-name: work-${esc(work.sourceId)}" /></div>
+          <div class="piece-art"><img id="piece-picture" src="${esc(work.thumbnailUrl || work.imageUrl)}" data-full="${esc(work.imageUrl)}" alt="${esc(work.title)}" decoding="async" style="view-transition-name: work-${esc(work.sourceId)}" /></div>
           ${this.infoHtml()}
         </div>
         ${this.similarHtml()}
@@ -89,6 +89,13 @@
 
     /** @param {{openCamera: Function, addToCart: Function, toggleSaved: Function}} actions each may return a promise */
     bind(actions) {
+      const picture = document.querySelector('#piece-picture');
+      if (picture && picture.dataset.full && picture.dataset.full !== picture.src) {
+        const full = new Image();
+        full.decoding = 'async';
+        full.onload = () => { picture.src = picture.dataset.full; };
+        full.src = picture.dataset.full;
+      }
       const error = document.querySelector('#work-error');
       const run = async (action) => {
         error.textContent = '';
