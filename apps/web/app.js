@@ -494,17 +494,6 @@ function mountApple(clientId) {
   document.head.appendChild(script);
 }
 
-function confidenceSentence(report) {
-  if (!report) return 'This first look starts uncertain.';
-  if (report.becameConfident) return 'You started uncertain. This work is now one you can stand behind.';
-  const checked = [];
-  if (report.signals.includes('credit_reviewed')) checked.push('the museum credit');
-  if (report.signals.includes('dimensions_checked')) checked.push('the recorded size');
-  if (report.signals.includes('viewed_in_room')) checked.push('the scale against a door');
-  const soFar = checked.length ? ` So far you have checked ${checked.join(', ').replace(/, ([^,]*)$/, ' and $1')}.` : '';
-  return `Still uncertain.${soFar}`;
-}
-
 async function loadConfidence(sourceId) {
   if (!signedIn()) return null;
   try {
@@ -642,45 +631,6 @@ async function showPhone(sourceId) {
   document.querySelector('#phone-qr').src = `/qr.svg?text=${encodeURIComponent(target)}`;
 }
 
-function wallTries(catalog) {
-  let tries = [];
-  try {
-    tries = JSON.parse(localStorage.getItem('marketplace.rooms') || '{}').tries || [];
-  } catch {
-    tries = [];
-  }
-  if (!tries.length) return '<p>No wall tries yet. Open a painting in the camera and come back.</p>';
-  const byId = new Map(catalog.map((work) => [work.sourceId, work]));
-  return `<div class="suggest">${tries.map((item) => {
-    const work = byId.get(item.sourceId);
-    return work ? workLink(work, `#try/${esc(work.sourceId)}`) : '';
-  }).join('')}</div>`;
-}
-
-function suggestionSets(catalog, confidence) {
-  const seen = new Set((confidence?.artworks || []).map((work) => work.sourceId));
-  const seenArtists = new Set(catalog.filter((work) => seen.has(work.sourceId) && work.artist).map((work) => work.artist));
-  const pieces = catalog.filter((work) => !seen.has(work.sourceId) && seenArtists.has(work.artist)).slice(0, 4);
-  const used = new Set(seenArtists);
-  const artists = [];
-  for (const work of catalog) {
-    if (seen.has(work.sourceId) || !work.artist || used.has(work.artist)) continue;
-    artists.push(work);
-    used.add(work.artist);
-    if (artists.length === 3) break;
-  }
-  return { pieces, artists, seenArtists: [...seenArtists] };
-}
-
-function workLink(work, href) {
-  return `<a class="work" href="${href}">
-    <span class="frame"><img src="${esc(work.thumbnailUrl)}" alt="" /></span>
-    <strong>${esc(work.title)}</strong>
-    <span>${esc(work.artist || 'Unknown artist')}</span>
-    <span class="measures">${esc(work.widthCm)} × ${esc(work.heightCm)} cm</span>
-  </a>`;
-}
-
 async function renderTry(sourceId) {
   carriedWork = sourceId;
   try {
@@ -716,12 +666,6 @@ async function renderTry(sourceId) {
     setPage('visit', 'Try on');
     place(formError(error), false);
   }
-}
-
-function orderLabel(status) {
-  if (status === 'awaiting_payment') return 'Unpaid';
-  if (status === 'paid') return 'Paid';
-  return status;
 }
 
 async function renderCart() {
@@ -804,282 +748,44 @@ async function renderSaved() {
 
 async function renderAccount() {
   carriedWork = null;
-  setPage('sheet', 'Account');
+  setPage('visit', 'Account');
   if (!signedIn()) {
-    place(`<h1>Account</h1><p><a href="#enter">Sign in</a> to see your profile and confidence.</p>`, false);
+    location.hash = '#enter';
     return;
   }
   try {
-    const [me, collector, confidence, orders, catalog, addresses] = await Promise.all([
-      api('/me'),
-      api('/me/collector'),
-      api('/me/confidence'),
-      api('/orders'),
-      api('/catalog/artworks'),
-      api('/me/addresses'),
+    const [me, collector, orders, catalog, addresses] = await Promise.all([
+      api('/me'), api('/me/collector'), api('/orders'), api('/catalog/artworks'), api('/me/addresses'),
     ]);
-    let artist = null;
-    try {
-      artist = await api('/me/artist');
-    } catch (error) {
-      if (error.code !== 'NOT_FOUND') throw error;
-    }
-    const titles = new Map(catalog.map((work) => [work.sourceId, work.title]));
-    const last = sessionStorage.getItem('marketplace.lastOrder');
-    const confident = confidence.summary.worksBecameConfident;
-    const uncertain = confidence.summary.worksStillUncertain;
-    const confidenceLine = confident
-      ? `${confident} you can stand behind. ${uncertain} ${uncertain === 1 ? 'is' : 'are'} still uncertain.`
-      : `${uncertain} still uncertain. None you can stand behind yet.`;
-    const works = confidence.artworks.length
-      ? confidence.artworks.map((work) => `<div class="opened"><p><a href="#work/${esc(work.sourceId)}">${esc(titles.get(work.sourceId) || work.sourceId)}</a></p><p>${esc(confidenceSentence(work))}</p><button type="button" class="quiet again" data-work="${esc(work.sourceId)}">Open it again</button></div>`).join('')
-      : '<p>No paintings opened yet.</p>';
-    const ideas = suggestionSets(catalog, confidence);
-    const forYou = ideas.pieces.length
-      ? `<div class="suggest">${ideas.pieces.map((work) => workLink(work, `#work/${esc(work.sourceId)}`)).join('')}</div>`
-      : '<p>Open a painting and this visit will follow the artists you actually look at.</p>';
-    const otherArtists = ideas.artists.length
-      ? `<div class="suggest">${ideas.artists.map((work) => workLink(work, `#work/${esc(work.sourceId)}`)).join('')}</div>`
-      : '';
-    const lookedAt = ideas.seenArtists.length
-      ? `<p>You have looked at ${esc(ideas.seenArtists.join(', '))}.</p>`
-      : '';
-    place(`<div class="account-head"><h1>${esc(collector.displayName)}</h1><button type="button" id="sign-out" class="quiet">Sign out</button></div>
-      <p>${esc(me.email)}</p>
-      ${last ? `<p>Order ${esc(last)} is placed and unpaid. Payment is outside this version, so nothing was charged.</p>` : ''}
-      <section class="block">
-        <h2>For you</h2>
-        ${lookedAt}
-        ${forYou}
-        ${otherArtists ? `<h2>Artists you have not opened</h2>${otherArtists}` : ''}
-      </section>
-      <section class="block">
-        <h2>Your name</h2>
-        <p>This is the name on the account. A shipping address is asked when you place an order.</p>
-        <form id="collector-form">
-          <label for="displayName">Name</label>
-          <input id="displayName" name="displayName" required minlength="2" value="${esc(collector.displayName)}" />
-          <button type="submit">Save name</button>
-          <p id="collector-result"></p>
-        </form>
-      </section>
-      <section class="block">
-        <h2>Sign-in</h2>
-        <p><a href="#forgot">Send a reset link</a> for this password.</p>
-        ${me.mfaEnabled
-          ? '<p>Two-factor is on. The next sign-in asks for a code from your authenticator, or one recovery code.</p>'
-          : `<p>Two-factor is off. Setting it up shows a secret, then asks for one code from an authenticator app.</p><button type="button" id="mfa-start">Set up two-factor</button>`}
-        <div id="mfa-enroll"></div>
-        <form id="password-form">
-          <label for="currentPassword">Current password</label>
-          <input id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required />
-          <label for="newPassword">New password</label>
-          <input id="newPassword" name="password" type="password" autocomplete="new-password" minlength="12" required />
-          <p class="note">At least 12 characters, with upper and lower case letters and a number.</p>
-          <button type="submit">Change password</button>
-          <p id="password-result"></p>
-        </form>
-      </section>
-      <section class="block">
-        <h2>Delivery addresses</h2>
-        ${addresses.length ? addresses.map((address) => `<p><strong>${esc(address.recipientName)}</strong><br>${esc(address.line1)}${address.line2 ? `, ${esc(address.line2)}` : ''}<br>${esc(address.city)}${address.region ? `, ${esc(address.region)}` : ''}<br><button type="button" class="quiet remove-address" data-id="${esc(address.id)}">Remove</button></p>`).join('') : '<p>No address saved yet.</p>'}
-        <form id="account-address">
-          <label for="recipientName">Name</label>
-          <input id="recipientName" name="recipientName" required />
-          <label for="addressPhone">Phone</label>
-          <input id="addressPhone" name="phone" type="tel" required />
-          <label for="line1">Street or landmark</label>
-          <input id="line1" name="line1" required />
-          <label for="addressCity">District or city</label>
-          <input id="addressCity" name="city" required />
-          <label for="addressRegion">Province</label>
-          <input id="addressRegion" name="region" />
-          <button type="submit">Save address</button>
-          <p id="address-result"></p>
-        </form>
-      </section>
-      <section class="block">
-        <h2>Your data</h2>
-        <p>The account, addresses, and privacy requests stored for this sign-in can be downloaded. A deletion request marks the account for removal.</p>
-        <button type="button" id="export-account">Download my data</button>
-        <button type="button" id="delete-account" class="quiet">Request deletion</button>
-        <p id="privacy-result"></p>
-      </section>
-      <section class="block">
-        <h2>Orders</h2>
-        <p>When a piece is on its way, the notice stays on this page. It does not open the camera.</p>
-        ${rateNote()}
-        ${orders.length ? orders.map((order) => `<p>${esc(order.number)} · ${esc(orderLabel(order.status))} · ${esc(money(order.totalAmount, order.currency))}</p>`).join('') : '<p>No orders yet. Nothing is on its way.</p>'}
-      </section>
-      <section class="block">
-        <h2>Tries on your wall</h2>
-        <p>Each painting you put on the wall is kept here. Open one to hang it again in the same kind of visit.</p>
-        ${wallTries(catalog)}
-      </section>
-      <section class="block">
-        <h2>Paintings you have opened</h2>
-        <p>${confidenceLine} Opening one again counts as coming back to it.</p>
-        ${works}
-      </section>
-      `, false, () => {
-      bindAccount();
-    });
+    const page = new window.Cinnarios.AccountPage({
+      email: me.email,
+      displayName: collector.displayName,
+      orders,
+      catalog,
+      addresses,
+      tries: window.Rooms.tries(),
+      savedIds: window.Rooms.savedIds(),
+    }, {
+      rename: (displayName) => api('/me/collector', { method: 'PATCH', body: JSON.stringify({ displayName }) }),
+      removeAddress: async (id) => {
+        await api(`/me/addresses/${id}`, { method: 'DELETE' });
+        renderAccount();
+      },
+      signOut: async () => {
+        try {
+          await api('/auth/logout', { method: 'POST', body: '{}' });
+        } catch {
+          /* The local session still ends. */
+        }
+        sessionStorage.removeItem(tokenKey);
+        cartCount.textContent = '';
+        location.hash = '#enter';
+      },
+    }, { esc, money });
+    place(page.html(), false, () => page.bind());
   } catch (error) {
     place(formError(error), false);
   }
-}
-
-function profileBody(form) {
-  const data = Object.fromEntries(new FormData(form));
-  const body = {};
-  if (data.displayName) body.displayName = data.displayName;
-  if (data.bio) body.bio = data.bio;
-  if (data.city) body.city = data.city;
-  if (data.countryCode) body.countryCode = data.countryCode.toUpperCase();
-  if (data.website) body.website = data.website;
-  return body;
-}
-
-function bindAccount() {
-  document.querySelector('#collector-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const result = document.querySelector('#collector-result');
-    const data = Object.fromEntries(new FormData(event.currentTarget));
-    try {
-      await api('/me/collector', {
-        method: 'PATCH',
-        body: JSON.stringify({ displayName: data.displayName }),
-      });
-      document.querySelector('h1').textContent = data.displayName;
-      result.className = '';
-      result.textContent = 'Name saved.';
-    } catch (error) {
-      result.className = 'error';
-      result.textContent = error.message;
-    }
-  });
-  document.querySelector('#mfa-start')?.addEventListener('click', async () => {
-    const box = document.querySelector('#mfa-enroll');
-    const start = document.querySelector('#mfa-start');
-    start.disabled = true;
-    try {
-      const enrollment = await api('/auth/mfa/enroll', { method: 'POST' });
-      start.hidden = true;
-      box.innerHTML = `
-        <p>Add this secret to an authenticator app. Write the recovery codes down before you confirm. Each code works once.</p>
-        <p class="secret">${esc(enrollment.secret)}</p>
-        <p class="secret">${enrollment.recoveryCodes.map((code) => esc(code)).join('<br />')}</p>
-        <form id="mfa-confirm">
-          <label for="mfaCode">Code from the app</label>
-          <input id="mfaCode" name="code" inputmode="numeric" autocomplete="one-time-code" required />
-          <button type="submit">Confirm two-factor</button>
-        </form>
-        <p id="mfa-error" class="error"></p>`;
-      document.querySelector('#mfa-confirm').addEventListener('submit', async (confirmEvent) => {
-        confirmEvent.preventDefault();
-        try {
-          await api('/auth/mfa/confirm', {
-            method: 'POST',
-            body: JSON.stringify({ code: new FormData(confirmEvent.currentTarget).get('code') }),
-          });
-          box.innerHTML = '<p>Two-factor is on. The next sign-in asks for a code.</p>';
-        } catch (error) {
-          document.querySelector('#mfa-error').textContent = error.message;
-        }
-      });
-    } catch (error) {
-      start.disabled = false;
-      box.innerHTML = `<p class="error">${esc(error.message)}</p>`;
-    }
-  });
-  document.querySelectorAll('.again').forEach((button) => {
-    button.addEventListener('click', () => {
-      localStorage.setItem(sessionKey, newId());
-      location.hash = `#work/${button.dataset.work}`;
-    });
-  });
-  document.querySelector('#password-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const result = document.querySelector('#password-result');
-    const data = Object.fromEntries(new FormData(event.currentTarget));
-    try {
-      await api('/auth/password/change', {
-        method: 'POST',
-        body: JSON.stringify({ currentPassword: data.currentPassword, password: data.password }),
-      });
-      result.className = '';
-      result.textContent = 'Password changed. Sign in again with the new one.';
-      sessionStorage.removeItem(tokenKey);
-      setTimeout(() => { location.hash = '#enter'; }, 600);
-    } catch (error) {
-      result.className = 'error';
-      result.textContent = error.message;
-    }
-  });
-  document.querySelector('#account-address').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const result = document.querySelector('#address-result');
-    const data = Object.fromEntries(new FormData(event.currentTarget));
-    data.countryCode = 'RW';
-    data.postalCode = 'N/A';
-    try {
-      await api('/me/addresses', { method: 'POST', body: JSON.stringify(data) });
-      result.className = '';
-      result.textContent = 'Address saved.';
-      renderAccount();
-    } catch (error) {
-      result.className = 'error';
-      result.textContent = error.message;
-    }
-  });
-  document.querySelectorAll('.remove-address').forEach((button) => {
-    button.addEventListener('click', async () => {
-      try {
-        await api(`/me/addresses/${button.dataset.id}`, { method: 'DELETE' });
-        renderAccount();
-      } catch (error) {
-        document.querySelector('#address-result').textContent = error.message;
-      }
-    });
-  });
-  document.querySelector('#export-account').addEventListener('click', async () => {
-    const result = document.querySelector('#privacy-result');
-    try {
-      const data = await api('/me/export');
-      const file = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(file);
-      link.download = 'cinnarios-account.json';
-      link.click();
-      result.className = '';
-      result.textContent = 'Download started.';
-    } catch (error) {
-      result.className = 'error';
-      result.textContent = error.message;
-    }
-  });
-  document.querySelector('#delete-account').addEventListener('click', async () => {
-    const result = document.querySelector('#privacy-result');
-    if (!window.confirm('Request deletion of this account?')) return;
-    try {
-      await api('/me/deletion-requests', { method: 'POST', body: '{}' });
-      result.className = '';
-      result.textContent = 'Deletion requested. The account is marked for removal.';
-    } catch (error) {
-      result.className = 'error';
-      result.textContent = error.message;
-    }
-  });
-  document.querySelector('#sign-out').addEventListener('click', async () => {
-    try {
-      await api('/auth/logout', { method: 'POST', body: '{}' });
-    } catch {
-      /* The local session still ends. */
-    }
-    sessionStorage.removeItem(tokenKey);
-    cartCount.textContent = '';
-    location.hash = '#enter';
-  });
 }
 
 if (location.pathname === '/reset-password') {
@@ -1089,7 +795,7 @@ if (location.pathname === '/reset-password') {
 }
 
 window.Shop = {
-  api, esc, money, rateNote, place, setPage, signedIn, formError, refreshCartCount, sessionId, workLink, openPieceInSpace,
+  api, esc, money, rateNote, place, setPage, signedIn, formError, refreshCartCount, sessionId, openPieceInSpace,
 };
 
 window.addEventListener('hashchange', () => {

@@ -308,8 +308,12 @@ async function noteWallTry(report) {
     state.tries.push({ sourceId, at: now });
     fresh.push(sourceId);
   }
-  keep(state);
   const outcome = report?.outcome || '';
+  // The try that ended the visit keeps how it ended and the saved wall picture, for Account.
+  const last = state.tries.find((item) => item.sourceId === current);
+  if (last && outcome) last.outcome = outcome;
+  if (last && report?.image && /^[\w.-]+$/.test(report.image)) last.image = report.image;
+  keep(state);
   if (!outcome && current) sessionStorage.setItem('marketplace.askDecision', current);
   if (outcome) sessionStorage.removeItem('marketplace.askDecision');
   const send = shop()?.api;
@@ -395,6 +399,10 @@ window.Rooms = {
     if (state.saved.includes(sourceId)) return;
     state.saved.splice(Math.max(0, Math.min(index, state.saved.length)), 0, sourceId);
     keep(state);
+  },
+  /** Every wall try kept in this browser, oldest first: { sourceId, at, outcome?, image? }. */
+  tries() {
+    return (rooms().tries || []).slice();
   },
   /** The paintings this browser has tried on a wall, oldest first. */
   triedIds() {
