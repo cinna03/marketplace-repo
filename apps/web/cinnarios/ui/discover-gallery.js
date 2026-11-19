@@ -104,15 +104,33 @@
       this.listeners.push(() => node.removeEventListener(type, handler, options));
     }
 
+    /** True when the pointer is on the paintings, including a small margin around each one. */
+    overBunch(x, y) {
+      const pad = 48;
+      return this.cards.some((card) => {
+        if (card.button.style.pointerEvents === 'none') return false;
+        const rect = card.button.getBoundingClientRect();
+        return x >= rect.left - pad && x <= rect.right + pad && y >= rect.top - pad && y <= rect.bottom + pad;
+      });
+    }
+
     start() {
+      // The wheel stays on the paintings. Farther away, the same wheel scrolls the page.
       this.on(this.stage, 'wheel', (event) => {
+        if (!this.overBunch(event.clientX, event.clientY)) return;
+        event.preventDefault();
         this.lastInput = Date.now();
-        this.target += event.deltaY / this.layout.wheel;
-      }, { passive: true });
+        const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+        this.target += delta / this.layout.wheel;
+      }, { passive: false });
       this.on(this.stage, 'pointerdown', (event) => {
+        if (!this.overBunch(event.clientX, event.clientY)) return;
         this.lastInput = Date.now();
         this.drag = { x: event.clientX, y: event.clientY, from: this.target, moved: 0 };
       });
+      this.on(this.stage, 'touchmove', (event) => {
+        if (this.drag) event.preventDefault();
+      }, { passive: false });
       this.on(this.stage, 'pointermove', (event) => {
         if (!this.drag) return;
         this.lastInput = Date.now();
