@@ -443,6 +443,13 @@ window.Rooms = {
   isReserved(sourceId) {
     return Boolean(rooms().reserved[sourceId]);
   },
+  /** Adds or removes a painting from Saved and says whether it is saved now. */
+  toggleSaved(sourceId) {
+    const state = rooms();
+    state.saved = state.saved.includes(sourceId) ? state.saved.filter((id) => id !== sourceId) : [...state.saved, sourceId];
+    keep(state);
+    return state.saved.includes(sourceId);
+  },
   workFacts(work) {
     const { esc } = shop();
     const state = rooms();

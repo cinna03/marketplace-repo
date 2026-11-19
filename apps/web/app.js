@@ -32,7 +32,6 @@ function esc(value) {
   })[character]);
 }
 
-const currencyKey = 'marketplace.currency';
 /** National Bank of Rwanda average for 17 Nov 2026: midpoint of the USD buying and selling rates. */
 const USD_TO_RWF = 1477.385;
 
@@ -44,29 +43,14 @@ const RW_PROVINCES = {
   'Western Province': ['Karongi', 'Ngororero', 'Nyabihu', 'Nyamasheke', 'Rubavu', 'Rusizi', 'Rutsiro'],
 };
 
-function displayCurrency() {
-  return localStorage.getItem(currencyKey) === 'USD' ? 'USD' : 'RWF';
-}
-
-function syncCurrency() {
-  const current = displayCurrency();
-  document.querySelectorAll('[data-currency]').forEach((button) => {
-    button.setAttribute('aria-pressed', String(button.dataset.currency === current));
-  });
-}
-
+/** Every price shows in Rwandan francs. Prices recorded in dollars are converted at USD_TO_RWF. */
 function money(cents, currency = 'USD') {
-  const code = String(currency).trim();
   const amount = Number(cents) / 100;
-  if (displayCurrency() === 'RWF' && code === 'USD') {
-    const francs = Math.round(amount * USD_TO_RWF);
-    return `RWF ${new Intl.NumberFormat('en-RW', { maximumFractionDigits: 0 }).format(francs)}`;
-  }
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: code }).format(amount);
+  const francs = String(currency).trim() === 'RWF' ? amount : amount * USD_TO_RWF;
+  return `RWF ${new Intl.NumberFormat('en-RW', { maximumFractionDigits: 0 }).format(Math.round(francs))}`;
 }
 
 function rateNote() {
-  if (displayCurrency() !== 'RWF') return '';
   return '<p class="note">Shown in francs at the National Bank of Rwanda average for 17 Nov 2026: 1 USD = 1,477.385 RWF. The price is still recorded in dollars.</p>';
 }
 
@@ -257,7 +241,6 @@ document.addEventListener('click', (event) => {
 });
 
 async function render() {
-  syncCurrency();
   markNav();
   const route = location.hash || '#home';
   if (!painted) app.innerHTML = '<p class="loading">Opening the works.</p>';
@@ -546,20 +529,6 @@ async function renderGallery() {
   }
 }
 
-function pieceNote(work) {
-  const artist = (work.artist || '').trim();
-  const date = (work.date || '').trim();
-  const medium = (work.mediumDescription || '').trim();
-  const credit = (work.creditLine || '').trim();
-  const who = artist
-    ? `${artist} painted ${work.title}`
-    : `The museum does not name the painter of ${work.title}`;
-  const when = date ? `, and dates the work ${date}` : '';
-  const process = medium ? ` The process on the museum record is ${medium}.` : '';
-  const held = credit ? ` ${credit}.` : '';
-  return `${who}${when}.${process}${held}`;
-}
-
 async function openPieceInSpace(sourceId) {
   let apiOrigin = location.origin;
   if (!window.CINNARIOS_PHONE) {
@@ -583,10 +552,14 @@ function backHref(from) {
   return pieceOrigin();
 }
 
+function describeFeel(work) {
+  return { subject: window.Rooms.subjectName(work), mood: window.Rooms.moodName(work), colour: window.Rooms.colourName(work) };
+}
+
 async function renderWork(sourceId, from) {
   carriedWork = sourceId;
   try {
-    const work = await api(`/catalog/artworks/${sourceId}`);
+    const [work, catalog] = await Promise.all([api(`/catalog/artworks/${sourceId}`), api('/catalog/artworks')]);
     setPage('visit', work.title);
     const prior = await loadConfidence(sourceId);
     const seen = new Set(prior?.signals ?? []);
@@ -598,54 +571,31 @@ async function renderWork(sourceId, from) {
         /* A stale sign-in should not hide the painting. */
       }
     }
-    place(`
-      <article class="detail">
-        <div class="viewer"><img id="zoom-image" src="${esc(work.imageUrl)}" alt="${esc(work.title)}" style="view-transition-name: work-${esc(sourceId)}" /></div>
-        <div class="facts">
-          <p><a href="${esc(backHref(from))}">Back</a></p>
-          <h1>${esc(work.title)}</h1>
-          <p>${esc(work.artist || 'Unknown artist')}${work.date ? `, ${esc(work.date)}` : ''}</p>
-          <p class="measures">${esc(work.widthCm)} × ${esc(work.heightCm)} × ${esc(work.depthCm)} cm</p>
-          <p class="price">${esc(money(work.priceAmount, work.currency))}</p>
-          <p>${esc(pieceNote(work))}</p>
-          ${window.Rooms?.workFacts(work) || ''}
-          <div class="actions">
-            <button type="button" class="button" id="open-space">Try this piece in your own space</button>
-            <button id="add" ${signedIn() && !window.Rooms?.isReserved(sourceId) ? '' : 'disabled'}>${window.Rooms?.isReserved(sourceId) ? 'Reserved in this browser' : 'Add to cart'}</button>
-            <button type="button" id="save-work" class="quiet">${window.Rooms?.isSaved(sourceId) ? 'Saved' : 'Save'}</button>
-          </div>
-          ${signedIn() ? '' : '<p class="note"><a href="#enter">Sign in</a> to keep a cart.</p>'}
-          <p id="work-error" class="error" role="alert"></p>
-        </div>
-      </article>`, sourceId, () => {
-    window.Rooms?.bindWork(work);
-    document.querySelector('#open-space').addEventListener('click', async () => {
-      const error = document.querySelector('#work-error');
-      error.textContent = '';
-      try {
-        await openPieceInSpace(sourceId);
-      } catch (err) {
-        error.textContent = err.message;
-      }
-    });
-    document.querySelector('#add').addEventListener('click', async () => {
-      const button = document.querySelector('#add');
-      if (window.Rooms?.isReserved(sourceId)) {
-        document.querySelector('#work-error').textContent = 'This browser already reserved that print in a sandbox order. Release it on this page to add it again.';
-        return;
-      }
-      button.disabled = true;
-      button.textContent = 'Adding…';
-      try {
-        await api('/cart/items', { method: 'POST', body: JSON.stringify({ sourceId, quantity: 1 }) });
-        await refreshCartCount();
-        location.hash = '#cart';
-      } catch (error) {
-        button.disabled = !window.Rooms?.isReserved(sourceId) && signedIn();
-        button.textContent = 'Add to cart';
-        document.querySelector('#work-error').textContent = error.message;
-      }
-    });
+    const reserved = window.Rooms.isReserved(sourceId);
+    const page = new window.Cinnarios.PiecePage({
+      work,
+      feel: describeFeel(work),
+      similar: new window.Cinnarios.SimilarityRanker(describeFeel).rank(work, catalog, 5),
+      from,
+      backHref: backHref(from),
+      saved: window.Rooms.isSaved(sourceId),
+      canAdd: signedIn() && !reserved,
+      extra: window.Rooms.workFacts(work) + (signedIn() ? '' : '<p class="piece-note"><a href="#enter">Sign in</a> to keep a cart.</p>'),
+    }, { esc, money });
+    place(page.html(), sourceId, () => {
+      window.Rooms.bindWork(work);
+      page.bind({
+        openCamera: () => openPieceInSpace(sourceId),
+        toggleSaved: () => window.Rooms.toggleSaved(sourceId),
+        addToCart: async () => {
+          if (window.Rooms.isReserved(sourceId)) {
+            throw new Error('This browser already reserved that print in a sandbox order. Release it on this page to add it again.');
+          }
+          await api('/cart/items', { method: 'POST', body: JSON.stringify({ sourceId, quantity: 1 }) });
+          await refreshCartCount();
+          location.hash = '#cart';
+        },
+      });
     });
   } catch (error) {
     setPage('visit', 'Work');
@@ -1137,13 +1087,6 @@ if (location.pathname === '/reset-password') {
   if (token) sessionStorage.setItem('marketplace.reset', token);
   history.replaceState(null, '', '/#reset');
 }
-
-document.querySelector('.currency').addEventListener('click', (event) => {
-  const button = event.target.closest('[data-currency]');
-  if (!button) return;
-  localStorage.setItem(currencyKey, button.dataset.currency);
-  render();
-});
 
 window.Shop = {
   api, esc, money, rateNote, place, setPage, signedIn, formError, refreshCartCount, sessionId, workLink, openPieceInSpace,
