@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nes
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import {
+  changePasswordSchema,
   forgotPasswordSchema,
   loginSchema,
   mfaChallengeSchema,
@@ -124,6 +125,17 @@ export class AuthController {
   ) {
     const session = await this.auth.challengeMfa(body.mfaToken, body.code);
     return this.present(response, session);
+  }
+
+  @Post('password/change')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(204)
+  async changePassword(
+    @CurrentUser() user: RequestUser,
+    @Body(new ZodValidationPipe(changePasswordSchema)) body: { currentPassword: string; password: string },
+    @Req() request: Request,
+  ) {
+    await this.auth.changePassword(user.id, body.currentPassword, body.password, request.ip);
   }
 
   @Post('password/forgot')

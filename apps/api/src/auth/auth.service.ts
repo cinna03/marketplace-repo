@@ -173,6 +173,34 @@ export class AuthService {
     return url.toString();
   }
 
+  async changePassword(userId: string, currentPassword: string, password: string, ip?: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user?.passwordHash) {
+      throw new ApiError(400, 'PASSWORD_UNAVAILABLE', 'This account signs in another way, so there is no password to change.');
+    }
+    const matches = await this.passwords.matches(user.passwordHash, currentPassword);
+    if (!matches) {
+      throw new ApiError(401, 'PASSWORD_INCORRECT', 'The current password is incorrect.');
+    }
+    const passwordHash = await this.passwords.hash(password);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { passwordHash, tokenVersion: { increment: 1 } },
+      });
+      await this.tokens.revokeAllForUser(userId, tx);
+      await tx.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'auth.password_change',
+          entityType: 'user',
+          entityId: userId,
+          ip,
+        },
+      });
+    });
+  }
+
   async resetPassword(token: string, password: string, ip?: string): Promise<void> {
     const tokenHash = sha256(token);
     const reset = await this.prisma.passwordResetToken.findUnique({ where: { tokenHash } });

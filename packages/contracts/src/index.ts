@@ -61,6 +61,11 @@ export const resetPasswordSchema = z.object({
   password: passwordSchema,
 });
 
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  password: passwordSchema,
+});
+
 export const updateMeSchema = z
   .object({
     phone: z.string().trim().min(7).max(20).nullable(),
@@ -90,6 +95,7 @@ export type MfaConfirmInput = z.infer<typeof mfaConfirmSchema>;
 export type MfaChallengeInput = z.infer<typeof mfaChallengeSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type UpdateMeInput = z.infer<typeof updateMeSchema>;
 export type AddressInput = z.infer<typeof addressSchema>;
 export type UpdateAddressInput = z.infer<typeof updateAddressSchema>;
