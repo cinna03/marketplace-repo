@@ -4,7 +4,7 @@
 (function () {
   class ResetPage {
     /**
-     * @param {{sendCode: (email: string) => Promise<{devCode?: string}>, checkCode: Function, reset: Function}} actions
+     * @param {{sendCode: (email: string) => Promise<void>, checkCode: Function, reset: Function}} actions
      * @param {{esc: Function}} format
      */
     constructor(actions, format) {
@@ -48,20 +48,21 @@
         }
         try {
           this.email = email;
-          this.codeStep(await this.actions.sendCode(email));
+          await this.actions.sendCode(email);
+          this.codeStep();
         } catch (err) {
           form.querySelector('.error').textContent = err.message;
         }
       });
     }
 
-    codeStep(sent = {}) {
+    codeStep() {
       this.show(`
         <div class="auth-badge">${window.Cinnarios.icons.mail()}</div>
         <h1>Check your email</h1>
         <p class="auth-lede">We sent a 6-digit code to <strong>${this.esc(this.email)}</strong>.</p>
         <div id="reset-code"></div>
-        ${sent.devCode ? `<p class="dev-code">Development: the code is ${this.esc(sent.devCode)}</p>` : ''}
+        <p class="dev-code">${window.Cinnarios.DemoCode.note()}</p>
         <p class="auth-foot"><button type="button" class="text-button" id="other-email">Use another email</button></p>`);
       document.querySelector('#other-email').addEventListener('click', () => this.emailStep());
       new window.Cinnarios.CodeInput(document.querySelector('#reset-code'), {
@@ -69,11 +70,7 @@
           await this.actions.checkCode(this.email, code);
           this.code = code;
         },
-        resend: async () => {
-          const again = await this.actions.sendCode(this.email);
-          const dev = document.querySelector('.dev-code');
-          if (dev && again.devCode) dev.textContent = `Development: the code is ${again.devCode}`;
-        },
+        resend: () => this.actions.sendCode(this.email),
         done: () => this.passwordStep(),
       }).mount();
     }

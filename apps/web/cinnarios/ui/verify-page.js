@@ -1,10 +1,10 @@
-// Confirm your email, once, right after creating an account: a 6-digit code is sent, the
-// buyer types it into the code boxes, and the account is ready.
+// Confirm your email, once, right after creating an account: the buyer types the 6-digit
+// code into the code boxes and the account is ready. The code is a placeholder for now.
 (function () {
   class VerifyPage {
     /**
      * @param {string} email
-     * @param {{send: () => Promise<{devCode?: string}>, verify: (code: string) => Promise<void>}} actions
+     * @param {{send: () => Promise<void>, verify: (code: string) => Promise<void>}} actions
      * @param {{esc: Function}} format
      */
     constructor(email, actions, format) {
@@ -20,22 +20,15 @@
         <h1>Confirm your email</h1>
         <p class="auth-lede">We sent a 6-digit code to <strong>${this.esc(this.email)}</strong>. You only do this once.</p>
         <div id="verify-code"></div>
-        <p class="dev-code" hidden></p>
+        <p class="dev-code">${window.Cinnarios.DemoCode.note()}</p>
         <p class="auth-foot"><a href="#account">Do this later</a></p>
       </div></section>`;
-    }
-
-    showDev(sent) {
-      const dev = document.querySelector('.dev-code');
-      if (!dev || !sent || !sent.devCode) return;
-      dev.hidden = false;
-      dev.textContent = `Development: the code is ${sent.devCode}`;
     }
 
     async bind() {
       new window.Cinnarios.CodeInput(document.querySelector('#verify-code'), {
         check: (code) => this.actions.verify(code),
-        resend: async () => this.showDev(await this.actions.send()),
+        resend: () => this.actions.send(),
         done: () => {
           document.querySelector('#verify-step').outerHTML = `<div class="step-in">
             <div class="done-badge">${window.Cinnarios.icons.check()}</div>
@@ -44,11 +37,7 @@
             <a class="button auth-wide" href="#account">Go to your account</a></div>`;
         },
       }).mount();
-      try {
-        this.showDev(await this.actions.send());
-      } catch (err) {
-        document.querySelector('#verify-code .code-message').textContent = err.message;
-      }
+      await this.actions.send();
     }
   }
 

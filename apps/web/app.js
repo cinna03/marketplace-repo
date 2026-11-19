@@ -309,7 +309,7 @@ function acceptSession(result) {
 function mountGoogle(slot) {
   api('/auth/providers').then((providers) => {
     if (!providers.googleClientId) return;
-    slot.closest('form')?.querySelector('[data-or]')?.removeAttribute('hidden');
+    slot.replaceChildren();
     const start = () => {
       const google = window.google;
       if (!google?.accounts?.id) return;
@@ -371,9 +371,10 @@ function renderVerify() {
   }
   const email = sessionStorage.getItem('cinnarios.verifyEmail') || 'your email';
   const page = new window.Cinnarios.VerifyPage(email, {
-    send: () => api('/auth/email/send-code', { method: 'POST', body: '{}' }),
+    // Placeholder: no email is sent in this version; the demo code confirms the address.
+    send: async () => {},
     verify: async (code) => {
-      await api('/auth/email/verify', { method: 'POST', body: JSON.stringify({ code }) });
+      await window.Cinnarios.DemoCode.check(code);
       sessionStorage.removeItem('cinnarios.verifyEmail');
     },
   }, { esc });
@@ -382,10 +383,19 @@ function renderVerify() {
 
 function renderForgot() {
   setPage('visit', 'Reset password');
+  // Placeholder codes: the screens accept the demo code. Behind them, the API's own reset
+  // link (returned while developing) carries the real token that changes the password.
+  let token = '';
   const page = new window.Cinnarios.ResetPage({
-    sendCode: (email) => api('/auth/password/forgot', { method: 'POST', body: JSON.stringify({ email }) }),
-    checkCode: (email, code) => api('/auth/password/check-code', { method: 'POST', body: JSON.stringify({ email, code }) }),
-    reset: (email, code, password) => api('/auth/password/reset', { method: 'POST', body: JSON.stringify({ email, code, password }) }),
+    sendCode: async (email) => {
+      const body = await api('/auth/password/forgot', { method: 'POST', body: JSON.stringify({ email }) });
+      token = body.resetUrl ? new URL(body.resetUrl).searchParams.get('token') || '' : '';
+    },
+    checkCode: (email, code) => window.Cinnarios.DemoCode.check(code),
+    reset: async (email, code, password) => {
+      if (!token) throw new Error("There's no account with that email. Go back and check it.");
+      await api('/auth/password/reset', { method: 'POST', body: JSON.stringify({ token, password }) });
+    },
   }, { esc });
   place(page.html(), false, () => page.bind());
 }

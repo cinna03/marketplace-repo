@@ -21,8 +21,8 @@
           <div class="auth-strip" aria-hidden="true"><span></span><span></span></div>
           <h1>${up ? 'Create your account' : 'Sign in'}</h1>
           <p class="auth-lede">${up ? 'Keep every wall you try and every piece you save.' : 'Welcome back to Cinnarios.'}</p>
-          <div class="google-slot" data-google></div>
-          <div class="auth-or" data-or hidden><span></span>or with email<span></span></div>
+          <div class="google-slot" data-google><button type="button" class="google-button" data-google-fallback><span class="google-mark" aria-hidden="true">G</span>Continue with Google</button></div>
+          <div class="auth-or"><span></span>or with email<span></span></div>
           ${up ? '<label class="sr-only" for="up-name">Your name</label><input id="up-name" name="name" autocomplete="name" placeholder="Your name" required minlength="2" />' : ''}
           <label class="sr-only" for="${kind}-email">Email</label>
           <input id="${kind}-email" name="email" type="email" autocomplete="${up ? 'email' : 'username'}" placeholder="Email" required />
@@ -94,6 +94,8 @@
       root.addEventListener('click', (event) => {
         const to = event.target.closest('[data-switch]');
         if (to) this.switchTo(to.dataset.switch);
+        const google = event.target.closest('[data-google-fallback]');
+        if (google) google.closest('form').querySelector('[data-error]').textContent = "Google sign-in isn't set up on this server yet. Use your email for now.";
         const show = event.target.closest('[data-show]');
         if (show) {
           const input = show.parentElement.querySelector('input');

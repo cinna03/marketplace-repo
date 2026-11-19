@@ -1,130 +1,152 @@
-// Scroll motion for the homepage, without relying on the newest CSS features, so it runs in
-// the phone app's web view too. One animation loop reads where each marked element sits in
-// the window, turns that into a progress from 0 to 1, and eases the shown value towards it
-// with linear interpolation (lerp), so fast scrolling still looks smooth.
-// Each kind of motion is a small class with one `draw(progress)` method (polymorphism).
+// Scroll motion for the homepage, written so it runs in every browser and in the phone app's
+// web view (the design mockup used CSS scroll timelines, which not every browser has).
+// One animation loop reads where each marked element sits in the window, turns that into a
+// progress value, and eases the shown value towards it with linear interpolation (lerp), so
+// fast scrolling still glides. Each kind of motion is a subclass of Effect with its own
+// draw() (polymorphism); the keyframes and ranges are the design's own.
 (function () {
   const EASE = 0.16;
-  const clamp = (value) => Math.min(1, Math.max(0, value));
+  const clamp = (value, low = 0, high = 1) => Math.min(high, Math.max(low, value));
   const lerp = (from, to, amount) => from + (to - from) * amount;
+  const number = (el, name) => parseFloat(el.style.getPropertyValue(name)) || 0;
 
-  /** Base class: how far through its range an element is. Subclasses decide what to draw. */
+  /** Base class: eases towards target() each frame and hands the eased value to draw(). */
   class Effect {
-    constructor(el, range = [0, 1]) {
+    constructor(el) {
       this.el = el;
-      this.range = range;
-      this.shown = 0;
+      this.shown = null;
     }
 
-    /** 0 when the element's top reaches the bottom of the window, 1 when its bottom leaves the top. */
-    cover() {
-      const rect = this.el.getBoundingClientRect();
+    /** How far `node` has travelled through the window: 0 as its top meets the bottom edge, 1 as its bottom leaves the top. */
+    static cover(node) {
+      const rect = node.getBoundingClientRect();
       const height = window.innerHeight;
       return clamp((height - rect.top) / (height + rect.height));
     }
 
+    /** Maps cover progress between `start` and `end` onto 0..1. */
+    static within(progress, start, end) {
+      return clamp((progress - start) / (end - start));
+    }
+
     target() {
-      const [start, end] = this.range;
-      return clamp((this.cover() - start) / (end - start));
+      return Effect.cover(this.el);
+    }
+
+    /** The value shown when motion is reduced: everything at rest in its final place. */
+    rest() {
+      return 1;
     }
 
     step(still) {
-      const goal = still ? 1 : this.target();
-      this.shown = still ? goal : lerp(this.shown, goal, EASE);
+      const goal = still ? this.rest() : this.target();
+      this.shown = still || this.shown === null ? goal : lerp(this.shown, goal, EASE);
       this.draw(this.shown);
     }
 
     draw() {}
   }
 
-  /** Words fill from pale grey to ink one after another. */
-  class InkWords extends Effect {
-    constructor(el, range) {
-      super(el, range);
+  /** Hero headline: word i inks in between i × 34 px and i × 34 + 90 px of scrolling. */
+  class ScrollInk extends Effect {
+    constructor(el) {
+      super(el);
       this.words = [...el.querySelectorAll('.w')];
     }
 
-    draw(progress) {
-      const n = this.words.length;
-      this.words.forEach((word, i) => {
-        const own = clamp(progress * (n + 2) - i);
-        word.style.color = `color-mix(in srgb, var(--ink) ${Math.round(own * 100)}%, #cfcbc2)`;
-      });
-    }
-  }
-
-  /** The hero headline: its words ink in over the first few hundred pixels of scrolling. */
-  class ScrollInk extends InkWords {
     target() {
-      return clamp(window.scrollY / (this.words.length * 34 + 90));
+      return window.scrollY;
+    }
+
+    rest() {
+      return 1e6;
+    }
+
+    draw(scrolled) {
+      this.words.forEach((word, i) => ScrollInk.ink(word, clamp((scrolled - i * 34) / 90)));
+    }
+
+    static ink(word, amount) {
+      word.style.color = `color-mix(in srgb, #111110 ${Math.round(amount * 100)}%, #cfcbc2)`;
     }
   }
 
-  /** The hero deck: a stacked pile that fans out over the first part of the page. */
-  class Deck extends Effect {
-    target() {
-      return clamp(window.scrollY / 380);
-    }
-
-    draw(progress) {
-      // Narrow screens fan out less, so the outer cards stay on screen.
-      const spread = Math.min(1, window.innerWidth / 900);
-      this.el.querySelectorAll('.fan-card').forEach((card) => {
-        const x = Number(card.dataset.x) * progress * spread;
-        const r = Number(card.dataset.r) * progress;
-        card.style.transform = `translateX(${x}px) rotate(${r}deg)`;
-      });
-      this.el.querySelectorAll('.fan-pop').forEach((pop) => {
-        const own = clamp((window.scrollY - 260) / 140);
-        pop.style.opacity = String(own);
-        pop.style.translate = `0 ${(1 - own) * 14}px`;
-      });
-    }
-  }
-
-  /** Fades and lifts into place, a little later for each `--i`. */
-  class Rise extends Effect {
+  /** Section headings: words ink in one after another as the heading crosses the window. */
+  class InkWords extends Effect {
     constructor(el) {
-      const i = Number(el.style.getPropertyValue('--i')) || 0;
-      super(el, [0.02 + i * 0.06, 0.3 + i * 0.06]);
+      super(el);
+      this.words = [...el.querySelectorAll('.w')];
+      this.gap = Math.min(0.04, 0.5 / Math.max(1, this.words.length));
     }
 
     draw(progress) {
-      this.el.style.opacity = String(progress);
-      this.el.style.translate = `0 ${(1 - progress) * 70}px`;
+      this.words.forEach((word, i) => {
+        const start = 0.12 + i * this.gap;
+        ScrollInk.ink(word, Effect.within(progress, start, start + 0.08));
+      });
     }
   }
 
-  /** A picture opens out from a rounded window to its full frame. */
+  /** The hero deck: a stacked pile that fans out over the first 380 px; the two badges pop in after. */
+  class Deck extends Effect {
+    constructor(el) {
+      super(el);
+      this.cards = [...el.querySelectorAll('.card')];
+      this.pops = [...el.querySelectorAll('.pop')];
+    }
+
+    target() {
+      return window.scrollY;
+    }
+
+    rest() {
+      return 400;
+    }
+
+    draw(scrolled) {
+      const spread = clamp(scrolled / 380);
+      const narrow = Math.min(1, window.innerWidth / 900);
+      this.cards.forEach((card) => {
+        card.style.transform = `translateX(${number(card, '--x') * spread * narrow}px) rotate(${number(card, '--r') * spread}deg)`;
+      });
+      const pop = clamp((scrolled - 260) / 140);
+      this.pops.forEach((badge) => {
+        badge.style.opacity = String(pop);
+        badge.style.translate = `0 ${(1 - pop) * 14}px`;
+      });
+    }
+  }
+
+  /** The "Your photo" panel opens from a rounded window to its full frame. */
   class Grow extends Effect {
     draw(progress) {
-      const inset = (1 - progress);
-      this.el.style.clipPath = `inset(${inset * 10}% ${inset * 18}% round ${28 + inset * 28}px)`;
+      const left = 1 - Effect.within(progress, 0, 0.45);
+      this.el.style.clipPath = `inset(${left * 10}% ${left * 18}% round ${28 + left * 28}px)`;
     }
   }
 
-  /** Drifts in from an offset given by data-dx/dy/dr. */
-  class Drift extends Effect {
-    draw(progress) {
-      const { dx = 0, dy = 0, dr = 0 } = this.el.dataset;
-      const away = 1 - progress;
-      this.el.style.opacity = String(progress);
-      this.el.style.transform = `translate(${dx * away}px, ${dy * away}px) rotate(${dr * away + Number(this.el.dataset.r || 0)}deg)`;
+  /** Effects timed by their whole section rather than by themselves. */
+  class SectionEffect extends Effect {
+    target() {
+      return Effect.cover(this.el.closest('section') || this.el);
     }
   }
 
-  /** Cards fly in from the corner, rest, then fly off, while their section passes. */
-  class Travel extends Effect {
+  /** Cards fly in from the top left, rest beside the panel, then fly off as the section passes. */
+  class Travel extends SectionEffect {
+    rest() {
+      return 0.5;
+    }
+
     draw(progress) {
-      const r = Number(this.el.dataset.r || 0);
-      let x; let y; let turn; let alpha;
-      if (progress < 0.35) {
-        const t = progress / 0.35;
+      const p = Effect.within(progress, 0.05, 0.95);
+      const r = number(this.el, '--r');
+      let x = 0; let y = 0; let turn = r; let alpha = 1;
+      if (p < 0.35) {
+        const t = p / 0.35;
         x = lerp(-320, 0, t); y = lerp(-420, 0, t); turn = lerp(-26, r, t); alpha = t;
-      } else if (progress < 0.7) {
-        x = 0; y = 0; turn = r; alpha = 1;
-      } else {
-        const t = (progress - 0.7) / 0.3;
+      } else if (p > 0.7) {
+        const t = (p - 0.7) / 0.3;
         x = lerp(0, 60, t); y = lerp(0, -260, t); turn = r + 10 * t; alpha = 1 - t;
       }
       this.el.style.opacity = String(alpha);
@@ -132,33 +154,88 @@
     }
   }
 
-  /** Slides in from the right. */
-  class SlideIn extends Effect {
+  /** The four stacked cards shuffle out to their own places. */
+  class Shuffle extends SectionEffect {
     draw(progress) {
-      this.el.style.opacity = String(0.2 + progress * 0.8);
-      this.el.style.translate = `${(1 - progress) * 40}% 0`;
+      const p = Effect.within(progress, 0.1, 0.55);
+      this.el.style.transform = `translate(${number(this.el, '--x') * p}px, ${number(this.el, '--y') * p}px) rotate(${number(this.el, '--r') * p}deg)`;
     }
   }
 
-  const KINDS = { ink: InkWords, 'scroll-ink': ScrollInk, deck: Deck, rise: Rise, grow: Grow, drift: Drift, travel: Travel, slide: SlideIn };
+  /** Mood tiles drift in from far away and settle at a slight angle. */
+  class Drift extends Effect {
+    constructor(el) {
+      super(el);
+      this.final = el.style.getPropertyValue('--t').trim();
+    }
+
+    draw(progress) {
+      const away = 1 - Effect.within(progress, 0, 0.4);
+      this.el.style.opacity = String(1 - away);
+      this.el.style.transform = `translate(${number(this.el, '--dx') * away}px, ${number(this.el, '--dy') * away}px) rotate(${number(this.el, '--dr') * away}deg) ${this.final}`;
+    }
+  }
+
+  /** The ring of 24: each painting flies in to its place, then drifts upward at its own pace. */
+  class Orbit extends SectionEffect {
+    rest() {
+      return 0.38;
+    }
+
+    draw(progress) {
+      const rot = number(this.el, '--rot');
+      if (progress < 0.38) {
+        const t = progress / 0.38;
+        const away = 1 - t;
+        this.el.style.opacity = String(t);
+        this.el.style.transform = `translate(${number(this.el, '--dx') * away}px, ${number(this.el, '--dy') * away}px) rotate(${lerp(number(this.el, '--r0'), rot, t)}deg) scale(${lerp(0.5, 1, t)})`;
+        return;
+      }
+      const t = (progress - 0.38) / 0.62;
+      this.el.style.opacity = '1';
+      this.el.style.transform = `translate(0, ${number(this.el, '--px') * t}px) rotate(${rot}deg)`;
+    }
+  }
+
+  /** Cards fade and lift into place, each a little after the one before. */
+  class Rise extends Effect {
+    draw(progress) {
+      const i = number(this.el, '--i');
+      const p = Effect.within(progress, 0.02 + i * 0.05, 0.3 + i * 0.06);
+      this.el.style.opacity = String(p);
+      this.el.style.translate = `0 ${(1 - p) * 70}px`;
+    }
+  }
+
+  /** The carousel slides in from the right. */
+  class SlideIn extends Effect {
+    draw(progress) {
+      const p = Effect.within(progress, 0, 0.4);
+      this.el.style.opacity = String(0.2 + p * 0.8);
+      this.el.style.translate = `${(1 - p) * 40}% 0`;
+    }
+  }
+
+  const KINDS = Object.freeze({
+    'scroll-ink': ScrollInk, ink: InkWords, deck: Deck, grow: Grow, travel: Travel,
+    shuffle: Shuffle, drift: Drift, orb: Orbit, rise: Rise, slide: SlideIn,
+  });
 
   class Motion {
-    /** @param {HTMLElement} root the page; every [data-motion] inside it moves */
+    /** @param {HTMLElement} root every [data-motion] inside it moves */
     constructor(root) {
       this.root = root;
       this.still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      this.effects = [...root.querySelectorAll('[data-motion]')].map((el) => {
-        const Kind = KINDS[el.dataset.motion];
-        const range = el.dataset.range ? el.dataset.range.split(',').map(Number) : undefined;
-        return Kind ? new Kind(el, range) : null;
-      }).filter(Boolean);
+      this.effects = [...root.querySelectorAll('[data-motion]')]
+        .map((el) => (KINDS[el.dataset.motion] ? new KINDS[el.dataset.motion](el) : null))
+        .filter(Boolean);
     }
 
     start() {
       const frame = () => {
         if (!this.root.isConnected) return;
         this.effects.forEach((effect) => effect.step(this.still));
-        if (!this.still) this.raf = requestAnimationFrame(frame);
+        if (!this.still) requestAnimationFrame(frame);
       };
       frame();
     }
