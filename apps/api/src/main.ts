@@ -22,7 +22,12 @@ async function bootstrap() {
   app.setGlobalPrefix('v1', {
     exclude: webRoot ? [] : [{ path: '/', method: RequestMethod.GET }],
   });
-  app.use(helmet(webRoot ? { contentSecurityPolicy: false, crossOriginEmbedderPolicy: false } : {}));
+  app.use(helmet(webRoot ? {
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    // Google's sign-in window has to be able to return to this page.
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+  } : {}));
   app.use(cookieParser());
   app.use(json({ limit: '32kb' }));
   const privateOrigin = /^https?:\/\/(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?::\d+)?$/;
