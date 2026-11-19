@@ -165,10 +165,44 @@ function place(html, carry, after) {
   painted = true;
 }
 
+function listOrigin() {
+  const route = location.hash || '#home';
+  if (route.startsWith('#search')) return '#search';
+  if (route.startsWith('#saved')) return '#saved';
+  if (route.startsWith('#home')) return '#home';
+  if (
+    route.startsWith('#gallery') ||
+    route.startsWith('#discover') ||
+    route.startsWith('#collection') ||
+    route.startsWith('#artist')
+  ) return '#gallery';
+  return null;
+}
+
+function pieceOrigin() {
+  const saved = sessionStorage.getItem('marketplace.origin');
+  if (saved === '#home' || saved === '#gallery' || saved === '#search' || saved === '#saved') return saved;
+  return '#home';
+}
+
 function markNav() {
-  const route = location.hash || '#gallery';
-  let tab = '#gallery';
-  if (route.startsWith('#search') || route.startsWith('#collection')) tab = '#search';
+  const route = location.hash || '#home';
+  let tab = '#home';
+  if (route.startsWith('#work/') || route.startsWith('#try/')) {
+    const from = route.split('/')[2];
+    tab = from === 'search' ? '#search'
+      : from === 'saved' ? '#saved'
+      : from === 'home' ? '#home'
+      : from === 'discover' ? '#gallery'
+      : pieceOrigin();
+  }
+  else if (route.startsWith('#search')) tab = '#search';
+  else if (
+    route.startsWith('#gallery') ||
+    route.startsWith('#discover') ||
+    route.startsWith('#collection') ||
+    route.startsWith('#artist')
+  ) tab = '#gallery';
   else if (
     route.startsWith('#saved') ||
     route.startsWith('#moodboard') ||
@@ -192,13 +226,13 @@ function markNav() {
 
 function setPage(mode, title) {
   document.body.dataset.page = mode;
-  document.title = title ? `${title} · Marketplace` : 'Marketplace';
+  document.title = title ? `${title} · Cinnarios` : 'Cinnarios';
   let back = document.querySelector('#back');
   if (mode === 'sheet') {
     if (!back) {
       back = document.createElement('a');
       back.id = 'back';
-      back.href = '#gallery';
+      back.href = '#home';
       back.textContent = 'Back';
       document.querySelector('.bar')?.prepend(back);
     }
@@ -212,7 +246,9 @@ document.addEventListener('click', (event) => {
   if (!link) return;
   const href = link.getAttribute('href');
   if (href.startsWith('#work/')) {
-    carriedWork = href.slice('#work/'.length);
+    const origin = listOrigin();
+    if (origin) sessionStorage.setItem('marketplace.origin', origin);
+    carriedWork = href.slice('#work/'.length).split('/')[0];
     const image = link.querySelector('img');
     if (image) image.style.viewTransitionName = `work-${carriedWork}`;
     return;
@@ -223,9 +259,10 @@ document.addEventListener('click', (event) => {
 async function render() {
   syncCurrency();
   markNav();
-  const route = location.hash || '#gallery';
+  const route = location.hash || '#home';
   if (!painted) app.innerHTML = '<p class="loading">Opening the works.</p>';
-  if (route.startsWith('#work/')) return renderWork(route.slice('#work/'.length).split('/')[0]);
+  if (route === '#home') return window.renderHome?.();
+  if (route.startsWith('#work/')) return renderWork(route.slice('#work/'.length).split('/')[0], route.split('/')[2]);
   if (route.startsWith('#try/')) return renderTry(route.slice('#try/'.length).split('/')[0]);
   if (route === '#cart') return renderCart();
   if (route === '#account') return renderAccount();
@@ -251,7 +288,7 @@ function acceptSession(result) {
   }
   sessionStorage.removeItem('marketplace.mfa');
   sessionStorage.setItem(tokenKey, result.accessToken);
-  location.hash = '#gallery';
+  location.hash = '#home';
 }
 
 function renderAuth() {
@@ -509,7 +546,44 @@ async function renderGallery() {
   }
 }
 
-async function renderWork(sourceId) {
+function pieceNote(work) {
+  const artist = (work.artist || '').trim();
+  const date = (work.date || '').trim();
+  const medium = (work.mediumDescription || '').trim();
+  const credit = (work.creditLine || '').trim();
+  const who = artist
+    ? `${artist} painted ${work.title}`
+    : `The museum does not name the painter of ${work.title}`;
+  const when = date ? `, and dates the work ${date}` : '';
+  const process = medium ? ` The process on the museum record is ${medium}.` : '';
+  const held = credit ? ` ${credit}.` : '';
+  return `${who}${when}.${process}${held}`;
+}
+
+async function openPieceInSpace(sourceId) {
+  let apiOrigin = location.origin;
+  if (!window.CINNARIOS_PHONE) {
+    const host = await fetch('/lan').then((response) => response.json());
+    apiOrigin = `http://${host.address}:3001`;
+  }
+  const cameraHref = `cinnarios://try/${sourceId}?api=${encodeURIComponent(apiOrigin)}`;
+  const call = window.Unity && window.Unity.call;
+  if (typeof call === 'function') {
+    call(cameraHref);
+    return;
+  }
+  window.location.href = cameraHref;
+}
+
+function backHref(from) {
+  if (from === 'search') return '#search';
+  if (from === 'discover') return '#gallery';
+  if (from === 'saved') return '#saved';
+  if (from === 'home') return '#home';
+  return pieceOrigin();
+}
+
+async function renderWork(sourceId, from) {
   carriedWork = sourceId;
   try {
     const work = await api(`/catalog/artworks/${sourceId}`);
@@ -524,24 +598,19 @@ async function renderWork(sourceId) {
         /* A stale sign-in should not hide the painting. */
       }
     }
-    const current = await loadConfidence(sourceId);
     place(`
       <article class="detail">
         <div class="viewer"><img id="zoom-image" src="${esc(work.imageUrl)}" alt="${esc(work.title)}" style="view-transition-name: work-${esc(sourceId)}" /></div>
         <div class="facts">
+          <p><a href="${esc(backHref(from))}">Back</a></p>
           <h1>${esc(work.title)}</h1>
           <p>${esc(work.artist || 'Unknown artist')}${work.date ? `, ${esc(work.date)}` : ''}</p>
           <p class="measures">${esc(work.widthCm)} × ${esc(work.heightCm)} × ${esc(work.depthCm)} cm</p>
           <p class="price">${esc(money(work.priceAmount, work.currency))}</p>
-          ${rateNote()}
-          <p>A reproduction at this size. Framing, a crate, and shipping are not part of this price.</p>
-          <p>${esc(work.creditLine)}</p>
-          <p>${esc(work.mediumDescription)}</p>
-          <p>Shop guides for comparing: colour ${esc(window.Rooms?.colourName?.(work) || '')}, mood ${esc(window.Rooms?.moodName?.(work) || '')}, subject ${esc(window.Rooms?.subjectName?.(work) || '')}. These sort the next pictures. They are not a measurement of the paint.</p>
-          <p id="confidence-line">${esc(signedIn() ? confidenceSentence(current) : 'Sign in to keep this try with the account.')}</p>
+          <p>${esc(pieceNote(work))}</p>
           ${window.Rooms?.workFacts(work) || ''}
           <div class="actions">
-            <a class="button" href="#try/${esc(sourceId)}">View in your room</a>
+            <button type="button" class="button" id="open-space">Try this piece in your own space</button>
             <button id="add" ${signedIn() && !window.Rooms?.isReserved(sourceId) ? '' : 'disabled'}>${window.Rooms?.isReserved(sourceId) ? 'Reserved in this browser' : 'Add to cart'}</button>
             <button type="button" id="save-work" class="quiet">${window.Rooms?.isSaved(sourceId) ? 'Saved' : 'Save'}</button>
           </div>
@@ -550,6 +619,15 @@ async function renderWork(sourceId) {
         </div>
       </article>`, sourceId, () => {
     window.Rooms?.bindWork(work);
+    document.querySelector('#open-space').addEventListener('click', async () => {
+      const error = document.querySelector('#work-error');
+      error.textContent = '';
+      try {
+        await openPieceInSpace(sourceId);
+      } catch (err) {
+        error.textContent = err.message;
+      }
+    });
     document.querySelector('#add').addEventListener('click', async () => {
       const button = document.querySelector('#add');
       if (window.Rooms?.isReserved(sourceId)) {
@@ -722,7 +800,7 @@ async function renderCart() {
             <label for="addressId">Ship to</label>
             <select id="addressId" name="addressId" ${addressOptions ? '' : 'disabled'}>${addressOptions || '<option>Save an address first</option>'}</select>
             <button type="submit" ${addressOptions ? '' : 'disabled'}>Proceed to checkout</button>
-            <p class="note">The next step checks a card or mobile-money number as a sandbox. The order stays unpaid, and nothing is charged.</p>
+            <p class="note">The next step records the order on this account. Payment is not taken.</p>
           </form>
         </section>`
       : '';
@@ -782,12 +860,13 @@ async function renderAccount() {
     return;
   }
   try {
-    const [me, collector, confidence, orders, catalog] = await Promise.all([
+    const [me, collector, confidence, orders, catalog, addresses] = await Promise.all([
       api('/me'),
       api('/me/collector'),
       api('/me/confidence'),
       api('/orders'),
       api('/catalog/artworks'),
+      api('/me/addresses'),
     ]);
     let artist = null;
     try {
@@ -841,6 +920,40 @@ async function renderAccount() {
           ? '<p>Two-factor is on. The next sign-in asks for a code from your authenticator, or one recovery code.</p>'
           : `<p>Two-factor is off. Setting it up shows a secret, then asks for one code from an authenticator app.</p><button type="button" id="mfa-start">Set up two-factor</button>`}
         <div id="mfa-enroll"></div>
+        <form id="password-form">
+          <label for="currentPassword">Current password</label>
+          <input id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required />
+          <label for="newPassword">New password</label>
+          <input id="newPassword" name="password" type="password" autocomplete="new-password" minlength="12" required />
+          <p class="note">At least 12 characters, with upper and lower case letters and a number.</p>
+          <button type="submit">Change password</button>
+          <p id="password-result"></p>
+        </form>
+      </section>
+      <section class="block">
+        <h2>Delivery addresses</h2>
+        ${addresses.length ? addresses.map((address) => `<p><strong>${esc(address.recipientName)}</strong><br>${esc(address.line1)}${address.line2 ? `, ${esc(address.line2)}` : ''}<br>${esc(address.city)}${address.region ? `, ${esc(address.region)}` : ''}<br><button type="button" class="quiet remove-address" data-id="${esc(address.id)}">Remove</button></p>`).join('') : '<p>No address saved yet.</p>'}
+        <form id="account-address">
+          <label for="recipientName">Name</label>
+          <input id="recipientName" name="recipientName" required />
+          <label for="addressPhone">Phone</label>
+          <input id="addressPhone" name="phone" type="tel" required />
+          <label for="line1">Street or landmark</label>
+          <input id="line1" name="line1" required />
+          <label for="addressCity">District or city</label>
+          <input id="addressCity" name="city" required />
+          <label for="addressRegion">Province</label>
+          <input id="addressRegion" name="region" />
+          <button type="submit">Save address</button>
+          <p id="address-result"></p>
+        </form>
+      </section>
+      <section class="block">
+        <h2>Your data</h2>
+        <p>The account, addresses, and privacy requests stored for this sign-in can be downloaded. A deletion request marks the account for removal.</p>
+        <button type="button" id="export-account">Download my data</button>
+        <button type="button" id="delete-account" class="quiet">Request deletion</button>
+        <p id="privacy-result"></p>
       </section>
       <section class="block">
         <h2>Orders</h2>
@@ -935,6 +1048,78 @@ function bindAccount() {
       location.hash = `#work/${button.dataset.work}`;
     });
   });
+  document.querySelector('#password-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const result = document.querySelector('#password-result');
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    try {
+      await api('/auth/password/change', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: data.currentPassword, password: data.password }),
+      });
+      result.className = '';
+      result.textContent = 'Password changed. Sign in again with the new one.';
+      sessionStorage.removeItem(tokenKey);
+      setTimeout(() => { location.hash = '#enter'; }, 600);
+    } catch (error) {
+      result.className = 'error';
+      result.textContent = error.message;
+    }
+  });
+  document.querySelector('#account-address').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const result = document.querySelector('#address-result');
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    data.countryCode = 'RW';
+    data.postalCode = 'N/A';
+    try {
+      await api('/me/addresses', { method: 'POST', body: JSON.stringify(data) });
+      result.className = '';
+      result.textContent = 'Address saved.';
+      renderAccount();
+    } catch (error) {
+      result.className = 'error';
+      result.textContent = error.message;
+    }
+  });
+  document.querySelectorAll('.remove-address').forEach((button) => {
+    button.addEventListener('click', async () => {
+      try {
+        await api(`/me/addresses/${button.dataset.id}`, { method: 'DELETE' });
+        renderAccount();
+      } catch (error) {
+        document.querySelector('#address-result').textContent = error.message;
+      }
+    });
+  });
+  document.querySelector('#export-account').addEventListener('click', async () => {
+    const result = document.querySelector('#privacy-result');
+    try {
+      const data = await api('/me/export');
+      const file = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(file);
+      link.download = 'cinnarios-account.json';
+      link.click();
+      result.className = '';
+      result.textContent = 'Download started.';
+    } catch (error) {
+      result.className = 'error';
+      result.textContent = error.message;
+    }
+  });
+  document.querySelector('#delete-account').addEventListener('click', async () => {
+    const result = document.querySelector('#privacy-result');
+    if (!window.confirm('Request deletion of this account?')) return;
+    try {
+      await api('/me/deletion-requests', { method: 'POST', body: '{}' });
+      result.className = '';
+      result.textContent = 'Deletion requested. The account is marked for removal.';
+    } catch (error) {
+      result.className = 'error';
+      result.textContent = error.message;
+    }
+  });
   document.querySelector('#sign-out').addEventListener('click', async () => {
     try {
       await api('/auth/logout', { method: 'POST', body: '{}' });
@@ -961,7 +1146,7 @@ document.querySelector('.currency').addEventListener('click', (event) => {
 });
 
 window.Shop = {
-  api, esc, money, rateNote, place, setPage, signedIn, formError, refreshCartCount, sessionId, workLink,
+  api, esc, money, rateNote, place, setPage, signedIn, formError, refreshCartCount, sessionId, workLink, openPieceInSpace,
 };
 
 window.addEventListener('hashchange', () => {

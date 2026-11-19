@@ -64,7 +64,7 @@ function blankRooms() {
     reserved: {},
     advisory: [],
     payout: null,
-    filters: { medium: '', min: '', max: '', colour: '', minW: '', minH: '', orientation: '' },
+    filters: { q: '', medium: '', min: '', max: '', colour: '', minW: '', minH: '', orientation: '' },
     concerns: {},
     feedback: {},
     tries: [],
@@ -113,6 +113,10 @@ function collectionsFrom(works) {
     { id: 'picks', title: 'Curator picks', text: 'A short wall of works already in the shop.', works: works.slice(0, 4) },
     { id: 'wide', title: 'Wider than tall', text: 'Works whose museum width is greater than the height.', works: works.filter((work) => orientationOf(work) === 'landscape') },
     { id: 'upright', title: 'Taller than wide', text: 'Works whose museum height is greater than the width.', works: works.filter((work) => orientationOf(work) === 'portrait') },
+    { id: 'earthy', title: 'Calm and earthy', text: 'Paintings the shop groups as earth or gold.', works: works.filter((work) => colourOf(work) === 'earth' || colourOf(work) === 'gold') },
+    { id: 'deep', title: 'Deep colour', text: 'Paintings the shop groups as dark or red.', works: works.filter((work) => colourOf(work) === 'dark' || colourOf(work) === 'red') },
+    { id: 'under-200', title: 'Under $200', text: 'The recorded price is under 200 US dollars.', works: works.filter((work) => Number(work.priceAmount) / 100 < 200) },
+    { id: 'landscapes', title: 'Landscapes', text: 'Works the shop reads as landscape.', works: works.filter((work) => subjectOf(work) === 'landscape') },
   ];
   const byArtist = new Map();
   for (const work of works) {
@@ -137,7 +141,20 @@ function findCollection(works, id) {
   return collectionsFrom(works).find((group) => group.id === id);
 }
 
+function matchesQuery(work, raw) {
+  const q = String(raw || '').trim().toLowerCase();
+  if (!q) return true;
+  const named = `${work.title || ''} ${work.artist || ''}`.toLowerCase();
+  if (named.includes(q)) return true;
+  const asked = q.replace(/×|x|\*|by/gi, ' ').replace(/cm/g, ' ').replace(/\s+/g, ' ').trim();
+  const numbers = asked.match(/\d+(?:\.\d+)?/g) || [];
+  if (!numbers.length) return false;
+  const dims = [Number(work.widthCm), Number(work.heightCm)];
+  return numbers.every((n) => dims.some((d) => String(d).startsWith(n) || Math.abs(d - Number(n)) < 0.05));
+}
+
 function passes(work, filters) {
+  if (!matchesQuery(work, filters.q)) return false;
   const price = Number(work.priceAmount) / 100;
   if (filters.medium && work.medium !== filters.medium) return false;
   if (filters.colour && colourOf(work) !== filters.colour) return false;
@@ -191,11 +208,12 @@ window.addEventListener('hashchange', () => {
   previousHash = location.hash;
 });
 
-function card(work) {
+function card(work, from) {
   const { esc } = shop();
   const state = rooms();
   const mark = state.reserved[work.sourceId] ? '<span class="badge">Reserved in this browser</span>' : '';
-  return `<a class="work" href="#work/${esc(work.sourceId)}">
+  const suffix = from ? `/${from}` : '';
+  return `<a class="work" href="#work/${esc(work.sourceId)}${suffix}">
     <span class="frame"><img src="${esc(work.thumbnailUrl)}" alt="" loading="lazy" decoding="async" /></span>
     ${mark}
     <strong>${esc(work.title)}</strong>
@@ -426,35 +444,15 @@ window.Rooms = {
     return Boolean(rooms().reserved[sourceId]);
   },
   workFacts(work) {
-    const { esc, money } = shop();
+    const { esc } = shop();
     const state = rooms();
     const framing = sessionStorage.getItem(`marketplace.frame:${work.sourceId}`) || 'none';
     const reserved = state.reserved[work.sourceId];
-    return `${reserved ? `<p class="badge">Reserved in this browser on order ${esc(reserved.orderNumber)}. The museum print stays in the catalogue for the camera. <button type="button" id="release" class="quiet">Release reservation</button></p>` : ''}
-      <div class="actions">
-        <button type="button" id="zoom-in" class="quiet">Closer</button>
-        <button type="button" id="zoom-out" class="quiet">Farther</button>
-      </div>`;
+    return reserved
+      ? `<p class="badge">Reserved in this browser on order ${esc(reserved.orderNumber)}. The museum print stays in the catalogue for the camera. <button type="button" id="release" class="quiet">Release reservation</button></p>`
+      : '';
   },
   bindWork(work) {
-    const image = document.querySelector('#zoom-image');
-    let scale = 1;
-    const paint = () => {
-      image.style.transform = `scale(${scale})`;
-    };
-    document.querySelector('#zoom-in')?.addEventListener('click', () => {
-      scale = Math.min(3, scale + 0.25);
-      paint();
-    });
-    document.querySelector('#zoom-out')?.addEventListener('click', () => {
-      scale = Math.max(1, scale - 0.25);
-      paint();
-    });
-    image?.addEventListener('wheel', (event) => {
-      event.preventDefault();
-      scale = Math.min(3, Math.max(1, scale + (event.deltaY < 0 ? 0.12 : -0.12)));
-      paint();
-    }, { passive: false });
     document.querySelector('#frame')?.addEventListener('change', (event) => {
       sessionStorage.setItem(`marketplace.frame:${work.sourceId}`, event.target.value);
       const extra = frames[event.target.value] || 0;
@@ -528,48 +526,194 @@ window.Rooms = {
   subjectName: subjectOf,
 };
 
+function iconHeart(on) {
+  return `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.7" d="M12 20.2S4.5 15.4 4.5 10a4 4 0 0 1 7.5-2 4 4 0 0 1 7.5 2c0 5.4-7.5 10.2-7.5 10.2z"/></svg>`;
+}
+
+function iconSaved() {
+  return `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M6 4.5h12V20l-6-3.2L6 20z"/></svg>`;
+}
+
+function iconMore() {
+  return `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M5 12h14M13 6l6 6-6 6"/></svg>`;
+}
+
+function likedWorks(works) {
+  const saved = rooms().saved;
+  const seeds = works.filter((work) => saved.includes(work.sourceId));
+  if (!seeds.length) return { label: '', works: [] };
+  const artists = new Set(seeds.map((work) => work.artist).filter(Boolean));
+  const colours = new Set(seeds.map(colourOf));
+  return {
+    label: seeds[0].title,
+    works: works.filter((work) => !saved.includes(work.sourceId) && (artists.has(work.artist) || colours.has(colourOf(work)))).slice(0, 8),
+  };
+}
+
+async function renderHome() {
+  const { api, esc, place, setPage, money } = shop();
+  setPage('visit', 'Home');
+  try {
+    const works = await api('/catalog/artworks');
+    const hero = works[0];
+    place(`
+      <h1>Home</h1>
+      <p class="intro">Public-domain paintings from The Met, at the centimetres the museum recorded.</p>
+      <a class="hero" href="#work/${esc(hero.sourceId)}/home">
+        <img src="${esc(hero.imageUrl)}" alt="${esc(hero.title)}" />
+        <strong>${esc(hero.title)}</strong>
+        <span>${esc(hero.artist || 'Unknown artist')} · ${esc(money(hero.priceAmount, hero.currency))}</span>
+      </a>
+      <div class="actions">
+        <a class="button" href="#gallery">Discover</a>
+        <a class="button quiet" href="#search">Search</a>
+      </div>`);
+  } catch (error) {
+    place(shop().formError(error), false);
+  }
+}
+
 async function renderDiscover() {
   const { api, esc, place, setPage, money } = shop();
   setPage('visit', 'Discover');
   try {
     const works = await api('/catalog/artworks');
-    const hero = works[0];
+    const state = rooms();
+    const groups = collectionsFrom(works);
+    const heroIds = ['picks', 'earthy', 'landscapes'];
+    const heroes = heroIds.map((id) => groups.find((group) => group.id === id)).filter(Boolean);
+    const pills = ['earthy', 'deep', 'under-200', 'landscapes'].map((id) => groups.find((group) => group.id === id)).filter(Boolean);
     const artists = [...new Map(works.filter((work) => work.artist).map((work) => [work.artist, work])).values()].slice(0, 8);
-    const mediums = [...new Set(works.map((work) => work.medium).filter(Boolean))];
+    const liked = likedWorks(works);
+    let tries = [];
+    try {
+      tries = state.tries || [];
+    } catch {
+      tries = [];
+    }
+    const byId = new Map(works.map((work) => [work.sourceId, work]));
+    const homes = tries.map((item) => byId.get(item.sourceId)).filter(Boolean).slice(0, 6);
+    const feed = works.slice(0, 12);
     place(`
-      <h1>Discover</h1>
-      <p class="intro">Public-domain paintings from The Met, at the centimetres the museum recorded.</p>
-      <a class="hero" href="#work/${esc(hero.sourceId)}">
-        <img src="${esc(hero.imageUrl)}" alt="${esc(hero.title)}" />
-        <strong>${esc(hero.title)}</strong>
-        <span>${esc(hero.artist || 'Unknown artist')} · ${esc(money(hero.priceAmount, hero.currency))}</span>
-      </a>
+      <header class="discover-head">
+        <h1>Discover</h1>
+        <a class="icon-link" href="#saved" aria-label="Saved paintings">${iconSaved()}</a>
+      </header>
+      <div class="editorial-row">
+        ${heroes.map((group) => {
+          const cover = group.works[0];
+          return `<a class="editorial" href="#collection/${encodeURIComponent(group.id)}">
+            <img src="${esc(cover.imageUrl)}" alt="${esc(cover.title)}" />
+            <span class="editorial-copy">
+              <strong>${esc(group.title)}</strong>
+              <span>${esc(group.text)}</span>
+              <span class="button">Explore</span>
+            </span>
+          </a>`;
+        }).join('')}
+      </div>
       <section class="block">
-        <h2>Curator picks</h2>
-        <div class="carousel">${works.slice(0, 6).map(card).join('')}</div>
+        <h2>Browse by feel</h2>
+        <div class="vibes">
+          ${pills.map((group) => `<a class="vibe" href="#collection/${encodeURIComponent(group.id)}">
+            <img src="${esc(group.works[0].thumbnailUrl)}" alt="" />
+            <span>${esc(group.title)}</span>
+          </a>`).join('')}
+        </div>
       </section>
       <section class="block">
-        <h2>Artists in the catalogue</h2>
-        <div class="carousel">${artists.map((work) => `<a class="pill-card" href="#artist/${encodeURIComponent(work.artist)}"><strong>${esc(work.artist)}</strong><span>Open the portfolio</span></a>`).join('')}</div>
+        <h2>From the catalogue</h2>
+        <div class="feed">
+          ${feed.map((work) => {
+            const saved = state.saved.includes(work.sourceId);
+            return `<article class="piece">
+              <div class="piece-visual">
+                <a class="frame" href="#work/${esc(work.sourceId)}/discover"><img src="${esc(work.thumbnailUrl)}" alt="${esc(work.title)}" loading="lazy" decoding="async" /></a>
+                <button type="button" class="heart" data-save="${esc(work.sourceId)}" aria-pressed="${saved}" aria-label="${saved ? 'Remove from saved' : 'Save this painting'}">${iconHeart(saved)}</button>
+                <button type="button" class="space-badge" data-space="${esc(work.sourceId)}">In your space</button>
+              </div>
+              <a class="piece-meta" href="#work/${esc(work.sourceId)}/discover">
+                <strong>${esc(work.title)}</strong>
+                <span>${esc(work.artist || 'Unknown artist')}</span>
+                <span class="measures">${esc(work.widthCm)} × ${esc(work.heightCm)} cm</span>
+                <span class="price">${esc(money(work.priceAmount, work.currency))}</span>
+              </a>
+            </article>`;
+          }).join('')}
+        </div>
       </section>
       <section class="block">
-        <h2>Medium</h2>
-        <div class="pills">${mediums.map((medium) => `<button type="button" class="quiet medium-pill" data-medium="${esc(medium)}">${esc(medium)}</button>`).join('')}</div>
+        <h2>Artists</h2>
+        <div class="stories">
+          ${artists.map((work) => {
+            const following = state.follows.includes(work.artist);
+            return `<article class="story">
+              <a href="#artist/${encodeURIComponent(work.artist)}"><img src="${esc(work.thumbnailUrl)}" alt="${esc(work.title)}" /></a>
+              <strong>${esc(work.artist)}</strong>
+              <button type="button" class="quiet follow" data-follow="${esc(work.artist)}" aria-pressed="${following}">${following ? 'Following' : '+ Follow'}</button>
+            </article>`;
+          }).join('')}
+        </div>
       </section>
       <section class="block">
-        <h2><a href="#collections">Collections</a></h2>
-        <div class="carousel">${collectionsFrom(works).slice(0, 3).map((group) => `<a class="pill-card" href="#collection/${encodeURIComponent(group.id)}"><strong>${esc(group.title)}</strong><span>${group.works.length} works</span></a>`).join('')}</div>
+        <h2>Because you liked${liked.label ? ` ${esc(liked.label)}` : ''}</h2>
+        ${liked.works.length ? `<div class="carousel">${liked.works.map((work) => `<article class="like-card">
+            <a class="work" href="#work/${esc(work.sourceId)}/discover">
+              <span class="frame"><img src="${esc(work.thumbnailUrl)}" alt="" loading="lazy" /></span>
+              <strong>${esc(work.title)}</strong>
+              <span>${esc(work.artist || 'Unknown artist')}</span>
+            </a>
+            <button type="button" class="quiet more" data-more="${esc(work.artist || work.title)}" aria-label="More like ${esc(work.title)}">${iconMore()} More like this</button>
+          </article>`).join('')}</div>` : '<p>Save a painting and this row follows the artist and the colour group.</p>'}
       </section>
-      <div class="grid">${works.map(card).join('')}</div>`, false, () => {
-      document.querySelectorAll('.medium-pill').forEach((button) => {
-        button.addEventListener('click', () => {
-          const state = rooms();
-          state.filters = { ...blankRooms().filters, medium: button.dataset.medium };
-          keep(state);
+      <section class="block">
+        <h2>In collectors' homes</h2>
+        ${homes.length ? `<div class="carousel">${homes.map((work) => `<a class="work" href="#work/${esc(work.sourceId)}/discover">
+            <span class="frame"><img src="${esc(work.thumbnailUrl)}" alt="${esc(work.title)}" /></span>
+            <strong>${esc(work.title)}</strong>
+            <span>Tried on a wall</span>
+          </a>`).join('')}</div>` : '<p>No wall photo yet. Try a piece in your own space, and that visit can be listed here.</p>'}
+      </section>`, false, () => {
+      const root = document.querySelector('#app');
+      root.addEventListener('click', (event) => {
+        const save = event.target.closest('[data-save]');
+        if (save) {
+          const id = save.dataset.save;
+          const next = rooms();
+          const on = next.saved.includes(id);
+          next.saved = on ? next.saved.filter((item) => item !== id) : [...next.saved, id];
+          keep(next);
+          save.setAttribute('aria-pressed', String(!on));
+          save.setAttribute('aria-label', on ? 'Save this painting' : 'Remove from saved');
+          save.innerHTML = iconHeart(!on);
+          return;
+        }
+        const space = event.target.closest('[data-space]');
+        if (space) {
+          shop().openPieceInSpace(space.dataset.space).catch((error) => {
+            space.insertAdjacentHTML('afterend', `<p class="error">${esc(error.message)}</p>`);
+          });
+          return;
+        }
+        const follow = event.target.closest('[data-follow]');
+        if (follow) {
+          const name = follow.dataset.follow;
+          const next = rooms();
+          const on = next.follows.includes(name);
+          next.follows = on ? next.follows.filter((item) => item !== name) : [...next.follows, name];
+          keep(next);
+          follow.setAttribute('aria-pressed', String(!on));
+          follow.textContent = on ? '+ Follow' : 'Following';
+          return;
+        }
+        const more = event.target.closest('[data-more]');
+        if (more) {
+          const next = rooms();
+          next.filters = { ...blankRooms().filters, q: more.dataset.more };
+          keep(next);
           location.hash = '#search';
-        });
+        }
       });
-      rememberScroll('#gallery');
     });
   } catch (error) {
     place(shop().formError(error), false);
@@ -587,7 +731,9 @@ async function renderSearch() {
     const filters = state.filters;
     place(`
       <h1>Search</h1>
-      <p class="intro">${shown.length} of ${works.length} works. Colour swatches are a shop guide, not a reading of the paint.</p>
+      <label for="find">Artist, title, or size</label>
+      <input id="find" type="search" placeholder="Hals, A Banquet, or 66 × 40" value="${esc(filters.q || '')}" />
+      <p class="intro" id="result-count">${shown.length} of ${works.length} works.${[filters.medium, filters.colour, filters.orientation].filter(Boolean).length ? ` ${[filters.medium, filters.colour, filters.orientation].filter(Boolean).join(', ')} is also on.` : ''}</p>
       <button type="button" id="open-filters">Filters</button>
       <dialog id="filters" class="sheet-dialog">
         <form method="dialog" id="filter-form">
@@ -618,8 +764,21 @@ async function renderSearch() {
           </div>
         </form>
       </dialog>
-      <div class="masonry">${shown.map(card).join('') || '<p>Nothing matches these filters. Clear them and look again.</p>'}</div>`, false, () => {
+      <div class="masonry">${shown.map((work) => card(work, 'search')).join('') || '<p>Nothing matches these filters. Clear them and look again.</p>'}</div>`, false, () => {
       const dialog = document.querySelector('#filters');
+      const paintResults = () => {
+        const next = rooms();
+        const found = works.filter((work) => passes(work, next.filters));
+        const on = [next.filters.medium, next.filters.colour, next.filters.orientation, next.filters.min && 'a minimum price', next.filters.max && 'a maximum price', (next.filters.minW || next.filters.minH) && 'a minimum size'].filter(Boolean);
+        document.querySelector('#result-count').textContent = `${found.length} of ${works.length} works.${on.length ? ` ${on.join(', ')} is also on.` : ''}`;
+        document.querySelector('.masonry').innerHTML = found.map((work) => card(work, 'search')).join('') || '<p>Nothing matches. Try another name, artist, or size.</p>';
+      };
+      document.querySelector('#find').addEventListener('input', (event) => {
+        const next = rooms();
+        next.filters = { ...blankRooms().filters, ...next.filters, q: event.target.value };
+        keep(next);
+        paintResults();
+      });
       document.querySelector('#open-filters').addEventListener('click', () => dialog.showModal());
       document.querySelector('#close-filters').addEventListener('click', () => dialog.close());
       document.querySelector('#clear-colour').addEventListener('click', () => {
@@ -643,7 +802,7 @@ async function renderSearch() {
       document.querySelector('#filter-form').addEventListener('submit', () => {
         const data = Object.fromEntries(new FormData(document.querySelector('#filter-form')));
         const next = rooms();
-        next.filters = { ...data, colour: dialog.dataset.colour || '' };
+        next.filters = { ...blankRooms().filters, ...next.filters, ...data, colour: dialog.dataset.colour || '' };
         keep(next);
         renderSearch();
       });
@@ -1141,77 +1300,23 @@ async function renderCheckout() {
   }
   const tier = sessionStorage.getItem('marketplace.shipTier') || 'kigali';
   place(`<h1>Checkout</h1>
-    <p class="badge">Sandbox / verification mode. No funds deducted.</p>
     <p>${cart.items.map((item) => esc(item.title)).join(', ')}</p>
     <p class="total">${esc(money(cart.totalAmount, cart.currency))}</p>
     ${rateNote()}
-    <p>Ship to ${esc(address.recipientName)}, ${esc(address.city)}${address.region ? `, ${esc(address.region)}` : ''}.</p>
+    <p>Ship to ${esc(address.recipientName)}, ${esc(address.line1)}, ${esc(address.city)}${address.region ? `, ${esc(address.region)}` : ''}.</p>
+    <p>The order is saved to this account and stays unpaid. Payment confirmation is not part of this version, so nothing is charged.</p>
     <form id="pay-form">
-      <label for="tier">Shipping guide</label>
-      <select id="tier" name="tier">
-        <option value="kigali" ${tier === 'kigali' ? 'selected' : ''}>Kigali rider, guide ${esc(money(shipTiers.kigali.cents))}</option>
-        <option value="province" ${tier === 'province' ? 'selected' : ''}>Another province, guide ${esc(money(shipTiers.province.cents))}</option>
-      </select>
-      <p class="note">The guide is not added to the recorded order.</p>
-      <div class="segment" role="group" aria-label="Payment check">
-        <button type="button" id="tab-card" aria-pressed="true">Card</button>
-        <button type="button" id="tab-momo" aria-pressed="false">Mobile money</button>
-      </div>
-      <div id="card-fields">
-        <label for="pan">Card number</label>
-        <input id="pan" name="pan" inputmode="numeric" autocomplete="off" />
-        <label for="exp">Expiry</label>
-        <input id="exp" name="exp" placeholder="MM/YY" autocomplete="off" />
-        <label for="cvv">Security code</label>
-        <input id="cvv" name="cvv" inputmode="numeric" autocomplete="off" />
-      </div>
-      <div id="momo-fields" hidden>
-        <label for="msisdn">Mobile money number</label>
-        <input id="msisdn" name="msisdn" inputmode="tel" placeholder="0788123456" />
-        <p class="note">MTN 078 or 079, Airtel 072 or 073.</p>
-      </div>
-      <button type="submit" id="authorize">Verify and place unpaid order</button>
+      <button type="submit" id="authorize">Place order</button>
       <p class="error" role="alert"></p>
     </form>
-    <dialog id="momo-dialog" class="sheet-dialog">
-      <h2>Approve the prompt</h2>
-      <p>Approve ${esc(money(0))} verification prompt on your handset. This check moves no money. The order total above is recorded and stays unpaid.</p>
-      <div class="actions">
-        <button type="button" id="momo-yes">Approve</button>
-        <button type="button" id="momo-no" class="quiet">Deny</button>
-      </div>
-    </dialog>
-    <p id="authorizing" class="settle" hidden>Checking the sandbox…</p>`, false, () => {
-    let method = 'card';
+    <p id="authorizing" class="settle" hidden>Saving the order…</p>`, false, () => {
     const form = document.querySelector('#pay-form');
-    document.querySelector('#tab-card').addEventListener('click', () => {
-      method = 'card';
-      document.querySelector('#tab-card').setAttribute('aria-pressed', 'true');
-      document.querySelector('#tab-momo').setAttribute('aria-pressed', 'false');
-      document.querySelector('#card-fields').hidden = false;
-      document.querySelector('#momo-fields').hidden = true;
-    });
-    document.querySelector('#tab-momo').addEventListener('click', () => {
-      method = 'momo';
-      document.querySelector('#tab-momo').setAttribute('aria-pressed', 'true');
-      document.querySelector('#tab-card').setAttribute('aria-pressed', 'false');
-      document.querySelector('#card-fields').hidden = true;
-      document.querySelector('#momo-fields').hidden = false;
-    });
-    const placeOrder = async (label) => {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
       document.querySelector('#authorizing').hidden = false;
       document.querySelector('#authorize').disabled = true;
-      const wait = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 1500;
-      await new Promise((resolve) => setTimeout(resolve, wait));
       try {
         const order = await api('/checkout', { method: 'POST', body: JSON.stringify({ addressId, sessionId: sessionId() }) });
-        const next = rooms();
-        for (const item of cart.items) next.reserved[item.sourceId] = { orderNumber: order.number, at: new Date().toISOString() };
-        next.methods = [{ kind: method, label }, ...next.methods.filter((item) => item.label !== label)].slice(0, 4);
-        keep(next);
-        const meta = JSON.parse(sessionStorage.getItem('marketplace.receipts') || '{}');
-        meta[order.number] = { method, label, tier: document.querySelector('#tier').value };
-        sessionStorage.setItem('marketplace.receipts', JSON.stringify(meta));
         sessionStorage.setItem('marketplace.lastOrder', order.number);
         await shop().refreshCartCount();
         location.hash = `#receipt/${order.number}`;
@@ -1220,45 +1325,6 @@ async function renderCheckout() {
         document.querySelector('#authorize').disabled = false;
         shake(form, error.message);
       }
-    };
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      sessionStorage.setItem('marketplace.shipTier', document.querySelector('#tier').value);
-      if (method === 'card') {
-        const pan = document.querySelector('#pan').value;
-        const digits = pan.replace(/\D/g, '');
-        if (!luhn(pan)) {
-          shake(form, 'That card number does not pass the check. Try the number again.');
-          return;
-        }
-        if (!expiryOk(document.querySelector('#exp').value)) {
-          shake(form, 'That expiry is missing or already past. Use a future MM/YY.');
-          return;
-        }
-        const cvv = document.querySelector('#cvv').value.replace(/\D/g, '');
-        const needed = digits.length === 15 ? 4 : 3;
-        if (cvv.length !== needed) {
-          shake(form, needed === 4 ? 'A 15-digit card needs a 4-digit security code.' : 'The security code needs 3 digits.');
-          return;
-        }
-        await placeOrder(`•••• ${digits.slice(-4)}`);
-        return;
-      }
-      const phone = document.querySelector('#msisdn').value;
-      if (!momoOk(phone)) {
-        shake(form, 'That mobile number does not match a Rwanda MoMo prefix. Use 072, 073, 078, or 079.');
-        return;
-      }
-      const dialog = document.querySelector('#momo-dialog');
-      dialog.showModal();
-      document.querySelector('#momo-yes').onclick = async () => {
-        dialog.close();
-        await placeOrder(phone.replace(/\s/g, ''));
-      };
-      document.querySelector('#momo-no').onclick = () => {
-        dialog.close();
-        shake(form, 'The handset prompt was denied. Nothing was reserved.');
-      };
     });
   });
 }
@@ -1299,6 +1365,7 @@ async function renderReceipt(number) {
   }
 }
 
+window.renderHome = renderHome;
 window.renderDiscover = renderDiscover;
 window.renderRoom = (route) => {
   if (route === '#search') {

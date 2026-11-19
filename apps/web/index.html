@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Marketplace</title>
+  <title>Cinnarios</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;560;650&family=Newsreader:opsz,wght@6..72,450;6..72,560&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=13" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css?v=17" />
 </head>
 <body>
   <header class="bar">
-    <a class="mark" href="#gallery">Marketplace</a>
+    <a class="mark" href="#home"><svg width="24" height="24" viewBox="0 0 26 26" fill="none" aria-hidden="true"><rect x="1" y="5" width="15" height="19" rx="3" stroke="currentColor" stroke-width="2"/><rect x="10" y="2" width="15" height="19" rx="3" fill="var(--accent)"/></svg>Cinnarios</a>
     <div class="bar-tools">
       <nav class="top-nav" aria-label="Cart">
         <a href="#cart">Cart <span id="cart-count"></span></a>
@@ -24,10 +24,11 @@
   </header>
   <main id="app"></main>
   <nav class="tabs" aria-label="Sections">
-    <a data-tab href="#gallery">Discover</a>
-    <a data-tab href="#search">Search</a>
-    <a data-tab href="#saved">Saved</a>
-    <a data-tab href="#account">Account</a>
+    <a data-tab href="#home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/></svg>Home</a>
+    <a data-tab href="#gallery"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>Discover</a>
+    <a data-tab href="#search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></svg>Search</a>
+    <a data-tab href="#saved"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>Saved</a>
+    <a data-tab href="#account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>Account</a>
   </nav>
   <script>
     window.addEventListener('error', (event) => {
@@ -40,7 +41,7 @@
     });
   </script>
   <script src="/guides.js?v=1"></script>
-  <script src="/rooms.js?v=8"></script>
-  <script src="/app.js?v=25"></script>
+  <script src="/rooms.js?v=14"></script>
+  <script src="/app.js?v=29"></script>
 </body>
 </html>
