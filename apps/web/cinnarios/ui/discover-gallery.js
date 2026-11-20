@@ -44,9 +44,23 @@
       const img = document.createElement('img');
       img.alt = '';
       img.decoding = 'async';
+      img.loading = 'eager';
       img.draggable = false;
       img.className = 'pending';
-      img.addEventListener('load', () => img.classList.remove('pending'), { once: true });
+      const full = work.thumbnailUrl || work.imageUrl || '';
+      const preview = full.includes('/web-large/') ? full.replace('/web-large/', '/web-additional/') : full;
+      let triedFull = false;
+      img.addEventListener('load', () => img.classList.remove('pending'));
+      img.addEventListener('error', () => {
+        if (!triedFull && full && img.src !== full) {
+          triedFull = true;
+          img.src = full;
+          return;
+        }
+        button.classList.add('is-missing');
+        button.textContent = work.title;
+      });
+      if (preview) img.src = preview;
       button.append(img);
       button.addEventListener('click', () => this.onOpen(work));
       this.track.append(button);
@@ -63,13 +77,9 @@
     draw() {
       const L = this.layout;
       this.cards.forEach((card, i) => {
-        const { button, img, ratio, work } = card;
+        const { button, ratio } = card;
         const t = this.offset(i);
         const a = Math.abs(t);
-        if (!card.loaded && a < this.layout.fade + 0.5) {
-          card.loaded = true;
-          img.src = work.thumbnailUrl || work.imageUrl;
-        }
         const h = L.cardH * (1 - Math.min(a, 6) * 0.045);
         const visible = Math.max(0, Math.min(1, (L.fade - a) / 1.5));
         button.style.width = `${Math.round(h * ratio)}px`;
