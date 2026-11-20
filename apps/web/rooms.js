@@ -1,4 +1,47 @@
 const roomKey = 'marketplace.rooms';
+const libraryPrefix = 'marketplace.library';
+let libraryId = '';
+
+function libraryKey() {
+  return libraryId ? `${libraryPrefix}.${libraryId}` : `${libraryPrefix}.guest`;
+}
+
+function readLibrary() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(libraryKey()) || '{}');
+    return {
+      saved: Array.isArray(parsed.saved) ? parsed.saved : [],
+      tries: Array.isArray(parsed.tries) ? parsed.tries : [],
+    };
+  } catch {
+    return { saved: [], tries: [] };
+  }
+}
+
+function writeLibrary(saved, tries) {
+  localStorage.setItem(libraryKey(), JSON.stringify({ saved, tries }));
+}
+
+// Older builds kept every account's hearts in one browser store. Move that copy to the
+// signed-out store once, and never copy it onto an account.
+function migrateSharedLibrary() {
+  const guestKey = `${libraryPrefix}.guest`;
+  if (localStorage.getItem(guestKey)) return;
+  try {
+    const shared = JSON.parse(localStorage.getItem(roomKey) || '{}');
+    const saved = Array.isArray(shared.saved) ? shared.saved : [];
+    const tries = Array.isArray(shared.tries) ? shared.tries : [];
+    if (!saved.length && !tries.length) return;
+    localStorage.setItem(guestKey, JSON.stringify({ saved, tries }));
+    delete shared.saved;
+    delete shared.tries;
+    localStorage.setItem(roomKey, JSON.stringify(shared));
+  } catch {
+    /* The old store stays where it is. */
+  }
+}
+
+migrateSharedLibrary();
 
 function wallPicture(image) {
   return /^https:\/\//.test(image) ? image : `${location.origin}/wall-tries/${image}`;
@@ -63,14 +106,22 @@ function blankRooms() {
 
 function rooms() {
   try {
-    return { ...blankRooms(), ...JSON.parse(localStorage.getItem(roomKey) || '{}') };
+    const state = { ...blankRooms(), ...JSON.parse(localStorage.getItem(roomKey) || '{}') };
+    const library = readLibrary();
+    state.saved = library.saved;
+    state.tries = library.tries;
+    return state;
   } catch {
     return blankRooms();
   }
 }
 
 function keep(next) {
-  localStorage.setItem(roomKey, JSON.stringify(next));
+  writeLibrary(next.saved || [], next.tries || []);
+  const rest = { ...next };
+  delete rest.saved;
+  delete rest.tries;
+  localStorage.setItem(roomKey, JSON.stringify(rest));
   window.Shop?.syncLibrary?.();
 }
 
@@ -422,16 +473,17 @@ window.Rooms = {
     };
   },
   replaceLibrary(saved, tries) {
-    const state = rooms();
-    state.saved = saved.slice();
-    state.tries = tries.slice();
-    localStorage.setItem(roomKey, JSON.stringify(state));
+    writeLibrary(saved.slice(), tries.slice());
   },
   clearLibrary() {
-    const state = rooms();
-    state.saved = [];
-    state.tries = [];
-    localStorage.setItem(roomKey, JSON.stringify(state));
+    writeLibrary([], []);
+  },
+  /** Saved paintings and wall tries for this account only. Null is the signed-out store. */
+  useAccount(userId) {
+    libraryId = userId || '';
+  },
+  accountId() {
+    return libraryId;
   },
   /** The paintings this browser has tried on a wall, oldest first. */
   triedIds() {

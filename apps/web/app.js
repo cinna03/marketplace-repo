@@ -280,10 +280,33 @@ document.addEventListener('click', (event) => {
 let libraryReady = false;
 let libraryTimer = 0;
 
+function accountIdFromToken(token) {
+  try {
+    const body = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = body + '='.repeat((4 - (body.length % 4)) % 4);
+    const payload = JSON.parse(atob(padded));
+    return typeof payload.sub === 'string' ? payload.sub : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Points the saved-painting store at the signed-in account, or at the signed-out store. */
+function bindLibraryAccount() {
+  const id = session.signedIn() ? accountIdFromToken(session.token()) : '';
+  if (window.Rooms.accountId() === id) return;
+  clearTimeout(libraryTimer);
+  window.Rooms.useAccount(id);
+  libraryReady = false;
+}
+
 function syncLibrary() {
   if (!signedIn()) return;
+  const id = accountIdFromToken(session.token());
+  if (!id || window.Rooms.accountId() !== id) return;
   clearTimeout(libraryTimer);
   libraryTimer = setTimeout(() => {
+    if (!signedIn() || window.Rooms.accountId() !== id) return;
     api('/me/library', { method: 'PUT', body: JSON.stringify(window.Rooms.snapshot()) }).catch(() => {});
   }, 400);
 }
@@ -304,7 +327,8 @@ async function pullLibrary() {
 }
 
 async function ensureLibrary() {
-  if (!signedIn() || libraryReady) return;
+  bindLibraryAccount();
+  if (!signedIn() || !window.Rooms.accountId() || libraryReady) return;
   libraryReady = true;
   try {
     await pullLibrary();
@@ -351,6 +375,7 @@ function acceptSession(result) {
   }
   session.keep(result.accessToken);
   if (result.user) sessionStorage.setItem('marketplace.emailVerified', result.user.emailVerifiedAt ? 'yes' : 'no');
+  bindLibraryAccount();
 }
 
 async function emailConfirmed() {
@@ -784,8 +809,11 @@ async function renderAccount() {
       },
       deleteAccount: async () => {
         await api('/me/deletion-requests', { method: 'POST', body: '{}' });
-        session.forget();
+        clearTimeout(libraryTimer);
         window.Rooms.clearLibrary();
+        session.forget();
+        window.Rooms.useAccount(null);
+        libraryReady = false;
         location.hash = '#enter';
       },
       signOut: async () => {
@@ -794,8 +822,9 @@ async function renderAccount() {
         } catch {
           /* The local session still ends. */
         }
+        clearTimeout(libraryTimer);
         session.forget();
-        window.Rooms.clearLibrary();
+        window.Rooms.useAccount(null);
         libraryReady = false;
         cartCount.textContent = '';
         location.hash = '#enter';
