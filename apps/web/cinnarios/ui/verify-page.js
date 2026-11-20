@@ -30,6 +30,7 @@
         check: (code) => this.actions.verify(code),
         resend: () => this.actions.send(),
         done: () => {
+          try { sessionStorage.removeItem('cinnarios.codeSentFor'); } catch { /* nothing kept */ }
           document.querySelector('#verify-step').outerHTML = `<div class="step-in">
             <div class="done-badge">${window.Cinnarios.icons.check()}</div>
             <h1>Email confirmed</h1>
@@ -37,11 +38,21 @@
             <a class="button auth-wide" href="#account">Go to your account</a></div>`;
         },
       }).mount();
-      document.querySelector('#verify-cancel')?.addEventListener('click', () => this.actions.cancel?.());
+      document.querySelector('#verify-cancel')?.addEventListener('click', () => {
+        try { sessionStorage.removeItem('cinnarios.codeSentFor'); } catch { /* nothing kept */ }
+        this.actions.cancel?.();
+      });
       const note = document.querySelector('#verify-code .code-message');
+      let already = false;
+      try { already = sessionStorage.getItem('cinnarios.codeSentFor') === this.email; } catch { already = false; }
+      if (already) {
+        if (note) note.textContent = 'Enter the code from your email. It expires in 15 minutes.';
+        return;
+      }
       if (note) note.textContent = 'Sending a code…';
       try {
         await this.actions.send();
+        try { sessionStorage.setItem('cinnarios.codeSentFor', this.email); } catch { /* private mode */ }
         if (note) note.textContent = 'A code was sent. Check your inbox and your spam folder.';
       } catch (err) {
         if (note) {

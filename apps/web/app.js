@@ -342,11 +342,6 @@ async function render() {
   newVisit();
   markNav();
   const route = location.hash || '#home';
-  const openWhileUnconfirmed = route === '#verify' || route === '#enter' || route === '#join' || route === '#forgot' || route === '#reset';
-  if (signedIn() && !openWhileUnconfirmed && !(await emailConfirmed())) {
-    location.hash = '#verify';
-    return;
-  }
   showLoadingSoon();
   if (route === '#home') return renderHome();
   if (route.startsWith('#work/')) return renderWork(route.slice('#work/'.length).split('/')[0], route.split('/')[2]);
@@ -449,10 +444,14 @@ function renderAuth(start = 'in') {
   place(page.html(), false, () => page.bind());
 }
 
-function renderVerify() {
+async function renderVerify() {
   setPage('visit', 'Confirm your email');
   if (!signedIn()) {
     location.hash = '#enter';
+    return;
+  }
+  if (await emailConfirmed()) {
+    location.hash = '#account';
     return;
   }
   const email = sessionStorage.getItem('cinnarios.verifyEmail') || 'your email';
