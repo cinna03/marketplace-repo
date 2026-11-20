@@ -80,7 +80,8 @@ export class AuthService {
         return created;
       });
       const session = await this.finishSignIn(user);
-      await this.sendVerifyCode(user.id, user.email).catch(() => undefined);
+      // The confirm page sends the code and shows its own status. Waiting here holds the button.
+      void this.sendVerifyCode(user.id, user.email).catch(() => undefined);
       return session;
     } catch (error) {
       if (isUniqueViolation(error)) {

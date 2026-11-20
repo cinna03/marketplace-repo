@@ -4,9 +4,15 @@ const API = window.CINNARIOS_PHONE || apiMeta === 'same'
   : `${location.protocol}//${location.hostname}:3001/v1`;
 const app = document.querySelector('#app');
 const cartCount = document.querySelector('#cart-count');
+const session = new window.Cinnarios.Session(API);
+// One shared copy of the 500 paintings per visit; fetched outside any page's cancel signal so every page can use it.
+const catalog = new window.Cinnarios.CatalogCache(async () => {
+  const response = await fetch(`${API}/catalog/artworks`, { credentials: 'include' });
+  if (!response.ok) throw new Error('The paintings could not be loaded.');
+  return response.json();
+});
 
 const sessionKey = 'marketplace.session';
-const tokenKey = 'marketplace.access';
 
 function newId() {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -65,10 +71,16 @@ function newVisit() {
 }
 
 async function api(path, options = {}) {
-  const headers = { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) };
-  const token = sessionStorage.getItem(tokenKey);
-  if (token) headers.Authorization = `Bearer ${token}`;
   const reading = !options.method || options.method === 'GET';
+  if (reading && path === '/catalog/artworks') {
+    const asked = visit;
+    const list = await catalog.all();
+    // A page the buyer has already left never draws.
+    return asked.signal.aborted ? new Promise(() => {}) : list;
+  }
+  const headers = { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) };
+  const token = session.token();
+  if (token) headers.Authorization = `Bearer ${token}`;
   const signal = reading ? visit.signal : undefined;
   let response;
   try {
@@ -79,19 +91,10 @@ async function api(path, options = {}) {
     throw error;
   }
   if (response.status === 401 && token && !path.startsWith('/auth/')) {
-    const refreshed = await fetch(API + '/auth/refresh', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-    });
-    if (refreshed.ok) {
-      const data = await refreshed.json();
-      sessionStorage.setItem(tokenKey, data.accessToken);
-      headers.Authorization = `Bearer ${data.accessToken}`;
+    // Expired: every request that lands here waits for the same single renewal, then tries once more.
+    if (await session.renew()) {
+      headers.Authorization = `Bearer ${session.token()}`;
       response = await fetch(API + path, { ...options, headers, credentials: 'include', signal });
-    } else {
-      sessionStorage.removeItem(tokenKey);
     }
   }
   const body = await response.json().catch(() => ({}));
@@ -104,7 +107,7 @@ async function api(path, options = {}) {
 }
 
 function signedIn() {
-  return Boolean(sessionStorage.getItem(tokenKey));
+  return session.signedIn();
 }
 
 async function refreshCartCount() {
@@ -346,7 +349,7 @@ function acceptSession(result) {
   if (result.mfaRequired) {
     throw new Error('This account still has the old two-step sign-in turned on, which this version no longer offers.');
   }
-  sessionStorage.setItem(tokenKey, result.accessToken);
+  session.keep(result.accessToken);
   if (result.user) sessionStorage.setItem('marketplace.emailVerified', result.user.emailVerifiedAt ? 'yes' : 'no');
 }
 
@@ -435,7 +438,7 @@ function renderVerify() {
       sessionStorage.removeItem('cinnarios.verifyEmail');
     },
     cancel: async () => {
-      sessionStorage.removeItem(tokenKey);
+      session.forget();
       sessionStorage.removeItem('marketplace.emailVerified');
       location.hash = '#join';
     },
@@ -547,26 +550,30 @@ async function renderSearch() {
   }
 }
 
+/** Notes that the buyer opened this painting. Runs after the page is drawn, so the buyer never waits for it. */
+async function recordView(sourceId) {
+  if (!signedIn()) return;
+  try {
+    const prior = await loadConfidence(sourceId);
+    const seen = new Set(prior?.signals ?? []);
+    await journey('artwork_viewed', sourceId);
+    if (!seen.has('credit_reviewed')) await journey('credit_reviewed', sourceId);
+  } catch {
+    /* A missed note never affects the page. */
+  }
+}
+
 async function renderWork(sourceId, from) {
   carriedWork = sourceId;
   try {
-    const [work, catalog] = await Promise.all([api(`/catalog/artworks/${sourceId}`), api('/catalog/artworks')]);
+    const list = await api('/catalog/artworks');
+    const work = list.find((item) => String(item.sourceId) === String(sourceId)) || await api(`/catalog/artworks/${sourceId}`);
     setPage('visit', work.title);
-    const prior = await loadConfidence(sourceId);
-    const seen = new Set(prior?.signals ?? []);
-    if (signedIn()) {
-      try {
-        await journey('artwork_viewed', sourceId);
-        if (!seen.has('credit_reviewed')) await journey('credit_reviewed', sourceId);
-      } catch {
-        /* A stale sign-in should not hide the painting. */
-      }
-    }
     const reserved = window.Rooms.isReserved(sourceId);
     const page = new window.Cinnarios.PiecePage({
       work,
       feel: describeFeel(work),
-      similar: new window.Cinnarios.SimilarityRanker(describeFeel).rank(work, catalog, 5),
+      similar: new window.Cinnarios.SimilarityRanker(describeFeel).rank(work, list, 5),
       from,
       backHref: backHref(from),
       saved: window.Rooms.isSaved(sourceId),
@@ -574,6 +581,7 @@ async function renderWork(sourceId, from) {
       extra: window.Rooms.workFacts(work) + (signedIn() ? '' : '<p class="piece-note"><a href="#enter">Sign in</a> to keep a cart.</p>'),
     }, { esc, money });
     place(page.html(), sourceId, () => {
+      recordView(sourceId);
       window.Rooms.bindWork(work);
       page.bind({
         openCamera: () => openPieceInSpace(sourceId),
@@ -776,7 +784,7 @@ async function renderAccount() {
       },
       deleteAccount: async () => {
         await api('/me/deletion-requests', { method: 'POST', body: '{}' });
-        sessionStorage.removeItem(tokenKey);
+        session.forget();
         window.Rooms.clearLibrary();
         location.hash = '#enter';
       },
@@ -786,7 +794,7 @@ async function renderAccount() {
         } catch {
           /* The local session still ends. */
         }
-        sessionStorage.removeItem(tokenKey);
+        session.forget();
         window.Rooms.clearLibrary();
         libraryReady = false;
         cartCount.textContent = '';
@@ -801,7 +809,7 @@ async function renderAccount() {
 
 async function uploadWallPhoto(file) {
   const headers = {};
-  const token = sessionStorage.getItem(tokenKey);
+  const token = session.token();
   if (token) headers.Authorization = `Bearer ${token}`;
   const body = new FormData();
   body.append('photo', file);
@@ -823,5 +831,8 @@ window.addEventListener('hashchange', () => {
   render();
   refreshCartCount();
 });
-render();
-refreshCartCount();
+// A new tab or a reload signs back in from the refresh cookie before the first page draws.
+session.restore().finally(() => {
+  render();
+  refreshCartCount();
+});

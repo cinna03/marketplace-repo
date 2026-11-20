@@ -6,6 +6,8 @@ import { CURATED_MET_OBJECT_IDS } from './curated-met-ids';
 import { CatalogDraft, mapMetObject, rejectionReason } from './met/map-met-object';
 import { MetCollectionClient } from './met/met-client';
 
+const CATALOG_CACHE_MS = 10 * 60 * 1000;
+
 export type CatalogView = {
   source: 'met';
   sourceId: string;
@@ -31,17 +33,32 @@ export class CatalogService {
     private readonly met: MetCollectionClient,
   ) {}
 
+  /**
+   * The catalogue changes only when it is synced, so one copy is kept in memory for ten
+   * minutes instead of reading 500 rows from the database on every page.
+   */
+  private cached: { at: number; list: CatalogView[]; byId: Map<string, CatalogView> } | null = null;
+
   async list(): Promise<CatalogView[]> {
-    const rows = await this.prisma.catalogArtwork.findMany({ orderBy: { title: 'asc' } });
-    return rows.map(present);
+    return (await this.snapshot()).list;
   }
 
   async getBySourceId(sourceId: string): Promise<CatalogView> {
+    const hit = (await this.snapshot()).byId.get(sourceId);
+    if (hit) return hit;
     const row = await this.prisma.catalogArtwork.findUnique({
       where: { source_sourceId: { source: 'met', sourceId } },
     });
     if (!row) throw new ApiError(404, 'NOT_FOUND', 'Artwork not found.');
     return present(row);
+  }
+
+  private async snapshot() {
+    if (this.cached && Date.now() - this.cached.at < CATALOG_CACHE_MS) return this.cached;
+    const rows = await this.prisma.catalogArtwork.findMany({ orderBy: { title: 'asc' } });
+    const list = rows.map(present);
+    this.cached = { at: Date.now(), list, byId: new Map(list.map((view) => [view.sourceId, view])) };
+    return this.cached;
   }
 
   async syncCurated(): Promise<{ imported: string[]; skipped: { id: number; reason: string }[] }> {
@@ -64,6 +81,7 @@ export class CatalogService {
       imported.push(draft.sourceId);
     }
 
+    this.cached = null;
     return { imported, skipped };
   }
 

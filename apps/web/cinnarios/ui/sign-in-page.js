@@ -61,7 +61,9 @@
 
     /** Shakes the form and says what is missing. */
     fail(form, message) {
-      form.querySelector('[data-error]').textContent = message;
+      const note = form.querySelector('[data-error]');
+      note.classList.remove('waiting');
+      note.textContent = message;
       form.classList.remove('shake');
       void form.offsetWidth;
       form.classList.add('shake');
@@ -77,13 +79,25 @@
         if (problem) return this.fail(form, problem);
       }
       const button = form.querySelector('button[type=submit]');
+      const label = button.textContent;
+      const note = form.querySelector('[data-error]');
       button.disabled = true;
+      button.textContent = up ? 'Creating account…' : 'Signing in…';
+      note.classList.remove('waiting');
+      const waking = window.setTimeout(() => {
+        if (!note.textContent) {
+          note.textContent = 'The shop is waking up. The first try after a quiet period can take a minute.';
+          note.classList.add('waiting');
+        }
+      }, 2000);
       try {
         await (up ? this.actions.create(data) : this.actions.signIn(data));
       } catch (err) {
         this.fail(form, err.message);
       } finally {
+        window.clearTimeout(waking);
         button.disabled = false;
+        button.textContent = label;
       }
       return undefined;
     }

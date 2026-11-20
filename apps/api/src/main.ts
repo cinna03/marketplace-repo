@@ -56,10 +56,17 @@ async function bootstrap() {
     const server = app.getHttpAdapter().getInstance();
     const page = readFileSync(join(webRoot, 'index.html'), 'utf8')
       .replace('name="cinnarios-api" content=""', 'name="cinnarios-api" content="same"');
-    server.get(['/', '/index.html'], (_req: unknown, res: { type: (t: string) => { send: (body: string) => void } }) => {
-      res.type('html').send(page);
+    server.get(['/', '/index.html'], (_req: unknown, res: express.Response) => {
+      // The page itself is always checked again, so a new deploy shows up straight away.
+      res.set('Cache-Control', 'no-cache').type('html').send(page);
     });
-    server.use(express.static(webRoot, { index: false }));
+    // Files asked for with a version (?v=12) never change under that version, so browsers keep
+    // them for a year; index.html bumps the version when a file changes. Anything else is rechecked.
+    server.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+      res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
+      next();
+    });
+    server.use(express.static(webRoot, { index: false, cacheControl: false }));
   }
 
   await app.listen(config.getOrThrow<number>('PORT'));
