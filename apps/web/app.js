@@ -427,7 +427,8 @@ function renderAuth(start = 'in') {
       location.hash = result.user?.emailVerifiedAt ? '#account' : '#verify';
     },
     create: async ({ name, email, password }) => {
-      acceptSession(await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) }));
+      const result = await api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) });
+      acceptSession(result);
       try {
         await api('/me/collector', { method: 'PATCH', body: JSON.stringify({ displayName: name.trim() }) });
       } catch {
@@ -435,8 +436,7 @@ function renderAuth(start = 'in') {
       }
       await refreshCartCount();
       sessionStorage.setItem('cinnarios.verifyEmail', email);
-      sessionStorage.setItem('marketplace.emailVerified', 'no');
-      location.hash = '#verify';
+      location.hash = result.user?.emailVerifiedAt ? '#account' : '#verify';
     },
     mountGoogle,
     pictures: async () => (await api('/catalog/artworks')).slice(0, 2).map((work) => work.thumbnailUrl || work.imageUrl),
@@ -513,12 +513,18 @@ async function renderGallery() {
   }
 }
 
+/** Where the camera should read the painting. The public shop, and the app, use this same site. */
+async function cameraApiOrigin() {
+  if (window.CINNARIOS_PHONE) return location.origin;
+  const host = location.hostname;
+  const onThisComputer = host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.') || host.startsWith('10.');
+  if (!onThisComputer) return location.origin;
+  const info = await fetch('/lan').then((response) => response.json());
+  return `http://${info.address}:3001`;
+}
+
 async function openPieceInSpace(sourceId) {
-  let apiOrigin = location.origin;
-  if (!window.CINNARIOS_PHONE) {
-    const host = await fetch('/lan').then((response) => response.json());
-    apiOrigin = `http://${host.address}:3001`;
-  }
+  const apiOrigin = await cameraApiOrigin();
   const cameraHref = `cinnarios://try/${sourceId}?api=${encodeURIComponent(apiOrigin)}`;
   const call = window.Unity && window.Unity.call;
   if (typeof call === 'function') {
@@ -644,8 +650,7 @@ async function renderTry(sourceId) {
     const work = await api(`/catalog/artworks/${sourceId}`);
     setPage('visit', work.title);
     const current = await loadConfidence(sourceId);
-    const host = window.CINNARIOS_PHONE ? null : await fetch('/lan').then((response) => response.json());
-    const apiOrigin = window.CINNARIOS_PHONE ? location.origin : `http://${host.address}:3001`;
+    const apiOrigin = await cameraApiOrigin();
     const cameraHref = `cinnarios://try/${sourceId}?api=${encodeURIComponent(apiOrigin)}`;
     place(`
       <article class="detail">
