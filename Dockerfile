@@ -1,4 +1,7 @@
 FROM node:22-bookworm-slim
+# Prisma on Debian needs the openssl CLI present before generate and migrate,
+# or it guesses OpenSSL 1.1 and then cannot open the database.
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
